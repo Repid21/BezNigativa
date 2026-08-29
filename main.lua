@@ -1,7 +1,7 @@
 -- BezNigativa | categorized Roblox ClickGUI
 -- RightShift toggles the menu.
 -- Visual ESP uses Drawing API when available.
--- All features are enabled everywhere.
+-- Movement and Combat are limited to Studio or an experience owned by LocalPlayer.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -15,6 +15,9 @@ if not LocalPlayer then
     warn("[BezNigativa] LocalPlayer not found")
     return
 end
+
+local safeEnvironment = RunService:IsStudio()
+    or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
 
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
@@ -514,7 +517,7 @@ bind(Players.PlayerAdded:Connect(function(player) task.defer(createPlayerDrawing
 bind(Players.PlayerRemoving:Connect(removePlayerDrawings))
 
 -- MOVEMENT
-pageTitle(MovementPage, "Movement", "All features enabled")
+pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled in this test environment" or "Locked: Studio / your own place only")
 
 local speedEnabled = false
 local jumpEnabled = false
@@ -619,18 +622,20 @@ bind(LocalPlayer.CharacterAdded:Connect(function()
     restoreNoclip()
     task.wait(0.2)
     captureDefaults()
-    if flyEnabled then
+    if flyEnabled and safeEnvironment then
         setFlyState(true)
     end
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
+    if value and not safeEnvironment then return false end
     speedEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then humanoid.WalkSpeed = defaults.WalkSpeed end
 end)
 
 local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
+    if value and not safeEnvironment then return false end
     jumpEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then
@@ -639,6 +644,7 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
 end)
 
 local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
+    if value and not safeEnvironment then return false end
     noclipEnabled = value
     if not value then
         restoreNoclip()
@@ -646,6 +652,7 @@ local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, f
 end)
 
 local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
+    if value and not safeEnvironment then return false end
     flyEnabled = value
     setFlyState(value)
 end)
@@ -668,7 +675,7 @@ flyHint.TextYAlignment = Enum.TextYAlignment.Top
 flyHint.Parent = MovementPage
 
 local function updateNoclip()
-    if not noclipEnabled then return end
+    if not noclipEnabled or not safeEnvironment then return end
     local character = LocalPlayer.Character
     if not character then return end
 
@@ -683,7 +690,7 @@ local function updateNoclip()
 end
 
 local function updateFly()
-    if not flyEnabled then return end
+    if not flyEnabled or not safeEnvironment then return end
 
     local humanoid = getHumanoid()
     local root = getRoot()
@@ -699,11 +706,10 @@ local function updateFly()
 
     local look = Camera.CFrame.LookVector
     local right = Camera.CFrame.RightVector
-    local forward = Vector3.new(look.X, 0, look.Z)
-    local strafe = Vector3.new(right.X, 0, right.Z)
 
-    if forward.Magnitude > 0.001 then forward = forward.Unit end
-    if strafe.Magnitude > 0.001 then strafe = strafe.Unit end
+    -- W/S follow the full camera look direction, including pitch.
+    local forward = look.Magnitude > 0.001 and look.Unit or Vector3.new(0, 0, -1)
+    local strafe = right.Magnitude > 0.001 and right.Unit or Vector3.new(1, 0, 0)
 
     local direction = Vector3.zero
     if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += forward end
@@ -719,7 +725,7 @@ local function updateFly()
 
     flyVelocity.Velocity = direction * flySpeed
 
-    local face = forward
+    local face = Vector3.new(look.X, 0, look.Z)
     if face.Magnitude <= 0.001 then
         face = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
     end
@@ -729,6 +735,7 @@ local function updateFly()
 end
 
 local function updateMovement()
+    if not safeEnvironment then return end
     local humanoid = getHumanoid()
     if humanoid then
         if speedEnabled then humanoid.WalkSpeed = speedValue end
@@ -745,7 +752,7 @@ local function updateMovement()
 end
 
 -- COMBAT / CAMERA ASSIST
-pageTitle(CombatPage, "Combat", "AimBot | first person")
+pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: Studio / your own place only")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
@@ -759,6 +766,7 @@ local aimGroups = {
 }
 
 local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
+    if value and not safeEnvironment then return false end
     cameraAssistEnabled = value
 end)
 
@@ -796,7 +804,7 @@ combatStatus.BackgroundTransparency = 1
 combatStatus.Position = UDim2.fromOffset(18, 340)
 combatStatus.Size = UDim2.new(1, -36, 0, 24)
 combatStatus.Font = Enum.Font.Code
-combatStatus.Text = "Enter first person to use AimBot"
+combatStatus.Text = safeEnvironment and "Enter first person to use AimBot" or "AimBot disabled outside your test environment"
 combatStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
 combatStatus.TextSize = 12
 combatStatus.TextXAlignment = Enum.TextXAlignment.Left
@@ -814,7 +822,18 @@ end
 
 local function isFirstPerson()
     if not Camera then return false end
-    return (Camera.CFrame.Position - Camera.Focus.Position).Magnitude < 1.2
+
+    if LocalPlayer.CameraMode == Enum.CameraMode.LockFirstPerson then
+        return true
+    end
+
+    local character = LocalPlayer.Character
+    local head = character and character:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        return (Camera.CFrame.Position - head.Position).Magnitude < 1.5
+    end
+
+    return false
 end
 
 local function addPartCandidate(list, character, name)
@@ -904,10 +923,10 @@ local function updateCombat()
     if fovCircle then
         fovCircle.Position = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
         fovCircle.Radius = fovRadius
-        fovCircle.Visible = cameraAssistEnabled
+        fovCircle.Visible = cameraAssistEnabled and safeEnvironment
     end
 
-    if not cameraAssistEnabled then return end
+    if not cameraAssistEnabled or not safeEnvironment then return end
 
     if not isFirstPerson() then
         combatStatus.Text = "Enter first person to use AimBot"
@@ -933,9 +952,15 @@ pageTitle(OtherPage, "Other", "No modules yet")
 bind(RunService.RenderStepped:Connect(function()
     Camera = workspace.CurrentCamera or Camera
     updateESP()
-    updateCombat()
     updateMovement()
 end))
+
+-- Apply AimBot after Roblox's normal camera update so CameraScript does not overwrite it.
+local AIMBOT_RENDER_NAME = "BezNigativaAimBotCamera"
+RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+    Camera = workspace.CurrentCamera or Camera
+    updateCombat()
+end)
 
 bind(RunService.Heartbeat:Connect(updateMovement))
 
@@ -982,6 +1007,10 @@ setPage("Combat")
 local function cleanup()
     if destroyed then return end
     destroyed = true
+
+    pcall(function()
+        RunService:UnbindFromRenderStep("BezNigativaAimBotCamera")
+    end)
 
     restoreNoclip()
     setFlyState(false)
