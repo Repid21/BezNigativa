@@ -16,6 +16,12 @@ if not LocalPlayer then
     return
 end
 
+-- Runtime-changing modules are allowed in Studio, an owned private server,
+-- or a public experience owned by the current Roblox user.
+local safeEnvironment = RunService:IsStudio()
+    or (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == LocalPlayer.UserId)
+    or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
+
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
     pcall(env.BezNigativaCleanup)
@@ -525,6 +531,9 @@ local jumpValue = 70
 local flySpeed = 45
 local defaults = {WalkSpeed = 16, JumpPower = 50, JumpHeight = 7.2}
 local noclipOriginalCollide = {}
+local flyVelocity = nil
+local flyGyro = nil
+local flyRoot = nil
 
 local function getHumanoid()
     local character = LocalPlayer.Character
@@ -545,15 +554,61 @@ local function restoreNoclip()
     table.clear(noclipOriginalCollide)
 end
 
+local function destroyFlyControllers()
+    if flyVelocity then
+        pcall(function() flyVelocity:Destroy() end)
+        flyVelocity = nil
+    end
+    if flyGyro then
+        pcall(function() flyGyro:Destroy() end)
+        flyGyro = nil
+    end
+    flyRoot = nil
+end
+
 local function setFlyState(enabled)
     local humanoid = getHumanoid()
     local root = getRoot()
-    if humanoid then
-        humanoid.PlatformStand = enabled
+
+    if not enabled then
+        destroyFlyControllers()
+        if humanoid then
+            humanoid.PlatformStand = false
+            humanoid.AutoRotate = true
+            humanoid.Sit = false
+        end
+        if root then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+        return
     end
-    if root and not enabled then
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
+
+    if not humanoid or not root then return end
+
+    -- Do not use PlatformStand for flight: it makes the avatar collapse/sit.
+    humanoid.PlatformStand = false
+    humanoid.Sit = false
+    humanoid.AutoRotate = false
+
+    if flyRoot ~= root or not flyVelocity or not flyVelocity.Parent or not flyGyro or not flyGyro.Parent then
+        destroyFlyControllers()
+        flyRoot = root
+
+        flyVelocity = Instance.new("BodyVelocity")
+        flyVelocity.Name = "BezNigativaFlyVelocity"
+        flyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        flyVelocity.P = 15000
+        flyVelocity.Velocity = Vector3.zero
+        flyVelocity.Parent = root
+
+        flyGyro = Instance.new("BodyGyro")
+        flyGyro.Name = "BezNigativaFlyGyro"
+        flyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+        flyGyro.P = 20000
+        flyGyro.D = 700
+        flyGyro.CFrame = root.CFrame
+        flyGyro.Parent = root
     end
 end
 
@@ -642,9 +697,12 @@ local function updateFly()
     Camera = workspace.CurrentCamera or Camera
     if not humanoid or not root or not Camera then return end
 
-    if not humanoid.PlatformStand then
-        humanoid.PlatformStand = true
-    end
+    setFlyState(true)
+    if not flyVelocity or not flyGyro then return end
+
+    humanoid.PlatformStand = false
+    humanoid.Sit = false
+    humanoid.AutoRotate = false
 
     local look = Camera.CFrame.LookVector
     local right = Camera.CFrame.RightVector
@@ -666,8 +724,16 @@ local function updateFly()
         direction = direction.Unit
     end
 
-    root.AssemblyLinearVelocity = direction * flySpeed
-    root.AssemblyAngularVelocity = Vector3.zero
+    -- BodyVelocity cancels gravity as well, so zero input gives a real hover.
+    flyVelocity.Velocity = direction * flySpeed
+
+    local face = forward
+    if face.Magnitude <= 0.001 then
+        face = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+    end
+    if face.Magnitude > 0.001 then
+        flyGyro.CFrame = CFrame.lookAt(root.Position, root.Position + face.Unit)
+    end
 end
 
 local function updateMovement()
@@ -676,7 +742,11 @@ local function updateMovement()
     if humanoid then
         if speedEnabled then humanoid.WalkSpeed = speedValue end
         if jumpEnabled then
-            if humanoid.UseJumpPower then humanoid.JumpPower = jumpValue else humanoid.JumpHeight = math.max(7.2, jumpValue / 10) end
+            if humanoid.UseJumpPower then
+            humanoid.JumpPower = jumpValue
+        else
+            humanoid.JumpHeight = math.max(defaults.JumpHeight, (jumpValue * jumpValue) / (2 * workspace.Gravity))
+        end
         end
     end
     updateNoclip()
@@ -874,6 +944,8 @@ bind(RunService.RenderStepped:Connect(function()
     Camera = workspace.CurrentCamera or Camera
     updateESP()
     updateCombat()
+    -- Reinforce movement settings because some place scripts rewrite them every frame.
+    updateMovement()
 end))
 
 bind(RunService.Heartbeat:Connect(updateMovement))
@@ -921,6 +993,9 @@ setPage("Combat")
 local function cleanup()
     if destroyed then return end
     destroyed = true
+
+    restoreNoclip()
+    setFlyState(false)
 
     local humanoid = getHumanoid()
     if humanoid then
