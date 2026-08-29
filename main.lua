@@ -16,10 +16,11 @@ if not LocalPlayer then
     return
 end
 
--- Runtime-changing modules are allowed in Studio, an owned private server,
--- or a public experience owned by the current Roblox user.
+-- Runtime-changing modules are allowed in Studio, any actual Roblox private/reserved server,
+-- or a public experience owned by the current Roblox user. Reserved servers report
+-- PrivateServerOwnerId == 0, so checking ownership here incorrectly blocks them.
 local safeEnvironment = RunService:IsStudio()
-    or (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == LocalPlayer.UserId)
+    or (game.PrivateServerId ~= "")
     or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
 
 local env = (getgenv and getgenv()) or _G
@@ -520,7 +521,7 @@ bind(Players.PlayerAdded:Connect(function(player) task.defer(createPlayerDrawing
 bind(Players.PlayerRemoving:Connect(removePlayerDrawings))
 
 -- MOVEMENT
-pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled in this test environment" or "Locked: Studio / your private server only")
+pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled: private/reserved test server" or "Locked: public server")
 
 local speedEnabled = false
 local jumpEnabled = false
@@ -754,7 +755,7 @@ local function updateMovement()
 end
 
 -- COMBAT / SAFE CAMERA ASSIST
-pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: Studio / your private server only")
+pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: public server")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
