@@ -1,6 +1,7 @@
--- BezNigativa | Xeno-friendly ESP test
--- RightShift toggles ClickGUI.
--- ESP uses executor Drawing API when available.
+-- BezNigativa | categorized Roblox ClickGUI
+-- RightShift toggles the menu.
+-- Visual ESP uses Drawing API when available.
+-- Movement controls are intentionally limited to Studio or a private server owned by LocalPlayer.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -15,7 +16,6 @@ if not LocalPlayer then
     return
 end
 
--- Clean up a previous execution, including Drawing objects/connections.
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
     pcall(env.BezNigativaCleanup)
@@ -25,6 +25,12 @@ local connections = {}
 local drawings = {}
 local playerDrawings = {}
 local destroyed = false
+
+local function connect(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(connections, connection)
+    return connection
+end
 
 local function disconnectAll()
     for _, connection in ipairs(connections) do
@@ -39,7 +45,6 @@ local function removeDrawing(object)
     if not object then
         return
     end
-
     pcall(function()
         object.Visible = false
         object:Remove()
@@ -55,7 +60,6 @@ local function removePlayerDrawings(targetPlayer)
     for _, object in pairs(bundle) do
         removeDrawing(object)
     end
-
     playerDrawings[targetPlayer] = nil
 end
 
@@ -63,7 +67,6 @@ local function removeAllDrawings()
     for targetPlayer in pairs(playerDrawings) do
         removePlayerDrawings(targetPlayer)
     end
-
     for _, object in ipairs(drawings) do
         removeDrawing(object)
     end
@@ -107,74 +110,85 @@ gui.Parent = guiParent
 
 local window = Instance.new("Frame")
 window.Name = "MainWindow"
-window.Size = UDim2.fromOffset(430, 225)
-window.Position = UDim2.new(0.5, -215, 0.5, -112)
+window.Size = UDim2.fromOffset(620, 390)
+window.Position = UDim2.new(0.5, -310, 0.5, -195)
 window.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 window.BorderSizePixel = 0
 window.Parent = gui
 
 local windowCorner = Instance.new("UICorner")
-windowCorner.CornerRadius = UDim.new(0, 6)
+windowCorner.CornerRadius = UDim.new(0, 7)
 windowCorner.Parent = window
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(55, 55, 55)
+stroke.Color = Color3.fromRGB(58, 58, 58)
 stroke.Thickness = 1
 stroke.Parent = window
 
 local topbar = Instance.new("Frame")
 topbar.Name = "Topbar"
-topbar.Size = UDim2.new(1, 0, 0, 36)
+topbar.Size = UDim2.new(1, 0, 0, 38)
 topbar.BackgroundColor3 = Color3.fromRGB(31, 31, 31)
 topbar.BorderSizePixel = 0
 topbar.Parent = window
 
 local topbarCorner = Instance.new("UICorner")
-topbarCorner.CornerRadius = UDim.new(0, 6)
+topbarCorner.CornerRadius = UDim.new(0, 7)
 topbarCorner.Parent = topbar
 
 local topbarFix = Instance.new("Frame")
-topbarFix.Size = UDim2.new(1, 0, 0, 6)
-topbarFix.Position = UDim2.new(0, 0, 1, -6)
+topbarFix.Size = UDim2.new(1, 0, 0, 7)
+topbarFix.Position = UDim2.new(0, 0, 1, -7)
 topbarFix.BackgroundColor3 = topbar.BackgroundColor3
 topbarFix.BorderSizePixel = 0
 topbarFix.Parent = topbar
 
 local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
-title.Position = UDim2.fromOffset(12, 0)
-title.Size = UDim2.new(1, -24, 1, 0)
+title.Position = UDim2.fromOffset(13, 0)
+title.Size = UDim2.new(1, -26, 1, 0)
 title.Font = Enum.Font.Code
 title.Text = "BezNigativa"
-title.TextColor3 = Color3.fromRGB(235, 235, 235)
+title.TextColor3 = Color3.fromRGB(238, 238, 238)
 title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = topbar
 
-local subtitle = Instance.new("TextLabel")
-subtitle.BackgroundTransparency = 1
-subtitle.Position = UDim2.fromOffset(15, 48)
-subtitle.Size = UDim2.new(1, -30, 0, 20)
-subtitle.Font = Enum.Font.Code
-subtitle.Text = "Visuals | RightShift: toggle menu"
-subtitle.TextColor3 = Color3.fromRGB(155, 155, 155)
-subtitle.TextSize = 14
-subtitle.TextXAlignment = Enum.TextXAlignment.Left
-subtitle.Parent = window
+local sidebar = Instance.new("Frame")
+sidebar.Name = "Sidebar"
+sidebar.Position = UDim2.fromOffset(0, 38)
+sidebar.Size = UDim2.new(0, 145, 1, -38)
+sidebar.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
+sidebar.BorderSizePixel = 0
+sidebar.Parent = window
 
-local function createToggle(name, y, text)
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(0, 1, 1, -38)
+divider.Position = UDim2.fromOffset(145, 38)
+divider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+divider.BorderSizePixel = 0
+divider.Parent = window
+
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Position = UDim2.fromOffset(146, 38)
+content.Size = UDim2.new(1, -146, 1, -38)
+content.BackgroundTransparency = 1
+content.Parent = window
+
+local function makeCategoryButton(name, y)
     local button = Instance.new("TextButton")
-    button.Name = name
-    button.Position = UDim2.fromOffset(15, y)
-    button.Size = UDim2.fromOffset(185, 34)
-    button.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+    button.Name = name .. "Tab"
+    button.Position = UDim2.fromOffset(10, y)
+    button.Size = UDim2.fromOffset(125, 36)
+    button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
     button.BorderSizePixel = 0
     button.AutoButtonColor = false
     button.Font = Enum.Font.Code
-    button.Text = text .. ": OFF"
-    button.TextColor3 = Color3.fromRGB(230, 230, 230)
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(190, 190, 190)
     button.TextSize = 14
-    button.Parent = window
+    button.Parent = sidebar
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 4)
@@ -183,44 +197,120 @@ local function createToggle(name, y, text)
     return button
 end
 
-local espButton = createToggle("ESP", 82, "ESP")
-local hpButton = createToggle("HealthBar", 126, "Health Bar")
+local categoryButtons = {
+    Combat = makeCategoryButton("Combat", 16),
+    Movement = makeCategoryButton("Movement", 60),
+    Visual = makeCategoryButton("Visual", 104),
+    Other = makeCategoryButton("Other", 148),
+}
 
-local status = Instance.new("TextLabel")
-status.BackgroundTransparency = 1
-status.Position = UDim2.fromOffset(15, 174)
-status.Size = UDim2.new(1, -30, 0, 22)
-status.Font = Enum.Font.Code
-status.TextColor3 = Color3.fromRGB(145, 145, 145)
-status.TextSize = 13
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.Text = "Drawing API: checking..."
-status.Parent = window
+local pages = {}
 
-local espEnabled = false
-local healthBarEnabled = false
+local function makePage(name)
+    local page = Instance.new("Frame")
+    page.Name = name .. "Page"
+    page.Size = UDim2.fromScale(1, 1)
+    page.BackgroundTransparency = 1
+    page.Visible = false
+    page.Parent = content
+
+    local heading = Instance.new("TextLabel")
+    heading.BackgroundTransparency = 1
+    heading.Position = UDim2.fromOffset(20, 14)
+    heading.Size = UDim2.new(1, -40, 0, 28)
+    heading.Font = Enum.Font.Code
+    heading.Text = name
+    heading.TextColor3 = Color3.fromRGB(235, 235, 235)
+    heading.TextSize = 20
+    heading.TextXAlignment = Enum.TextXAlignment.Left
+    heading.Parent = page
+
+    pages[name] = page
+    return page
+end
+
+local combatPage = makePage("Combat")
+local movementPage = makePage("Movement")
+local visualPage = makePage("Visual")
+local otherPage = makePage("Other")
+
+local function makeEmptyLabel(page, text)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Position = UDim2.fromOffset(20, 58)
+    label.Size = UDim2.new(1, -40, 0, 24)
+    label.Font = Enum.Font.Code
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(135, 135, 135)
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = page
+end
+
+makeEmptyLabel(combatPage, "No modules yet.")
+makeEmptyLabel(otherPage, "No modules yet.")
 
 local function setToggleVisual(button, label, enabled)
     button.Text = label .. (enabled and ": ON" or ": OFF")
     button.BackgroundColor3 = enabled and Color3.fromRGB(55, 95, 65) or Color3.fromRGB(43, 43, 43)
 end
 
-local drawingSupported = false
-local drawingError = nil
+local function makeToggle(page, name, label, y)
+    local button = Instance.new("TextButton")
+    button.Name = name
+    button.Position = UDim2.fromOffset(20, y)
+    button.Size = UDim2.fromOffset(195, 34)
+    button.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+    button.BorderSizePixel = 0
+    button.AutoButtonColor = false
+    button.Font = Enum.Font.Code
+    button.Text = label .. ": OFF"
+    button.TextColor3 = Color3.fromRGB(230, 230, 230)
+    button.TextSize = 14
+    button.Parent = page
 
-local ok, result = pcall(function()
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = button
+
+    return button
+end
+
+local function makeInfoLabel(page, text, y)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Position = UDim2.fromOffset(20, y)
+    label.Size = UDim2.new(1, -40, 0, 22)
+    label.Font = Enum.Font.Code
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(140, 140, 140)
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = page
+    return label
+end
+
+-- Visual page ---------------------------------------------------------------
+local espButton = makeToggle(visualPage, "ESP", "ESP", 58)
+local hpButton = makeToggle(visualPage, "HealthBar", "Health Bar", 102)
+local drawingStatus = makeInfoLabel(visualPage, "Drawing API: checking...", 150)
+
+local espEnabled = false
+local healthBarEnabled = false
+local drawingSupported = false
+
+local drawingOk, drawingResult = pcall(function()
     return Drawing ~= nil and type(Drawing.new) == "function"
 end)
 
-drawingSupported = ok and result == true
+drawingSupported = drawingOk and drawingResult == true
 
 if drawingSupported then
-    status.Text = "Drawing API: ready"
-    status.TextColor3 = Color3.fromRGB(125, 190, 135)
+    drawingStatus.Text = "Drawing API: ready"
+    drawingStatus.TextColor3 = Color3.fromRGB(125, 190, 135)
 else
-    drawingError = "Drawing.new is unavailable"
-    status.Text = "Drawing API: unavailable in this Xeno build"
-    status.TextColor3 = Color3.fromRGB(205, 120, 120)
+    drawingStatus.Text = "Drawing API: unavailable in this Xeno build"
+    drawingStatus.TextColor3 = Color3.fromRGB(205, 120, 120)
 end
 
 local function newDrawing(className)
@@ -234,9 +324,8 @@ local function newDrawing(className)
 
     if not success or not object then
         drawingSupported = false
-        drawingError = tostring(object)
-        status.Text = "Drawing API error - check Xeno build"
-        status.TextColor3 = Color3.fromRGB(205, 120, 120)
+        drawingStatus.Text = "Drawing API error - check Xeno build"
+        drawingStatus.TextColor3 = Color3.fromRGB(205, 120, 120)
         return nil
     end
 
@@ -287,7 +376,6 @@ local function hideBundle(bundle)
     if not bundle then
         return
     end
-
     bundle.Box.Visible = false
     bundle.HpBackground.Visible = false
     bundle.HpFill.Visible = false
@@ -295,18 +383,17 @@ end
 
 local function getCharacterScreenBounds(character)
     local root = character:FindFirstChild("HumanoidRootPart")
-    if not root then
+    if not root or not Camera then
         return nil
     end
 
-    local _, rootVisible = Camera:WorldToViewportPoint(root.Position)
-    if not rootVisible then
+    local rootPoint, rootVisible = Camera:WorldToViewportPoint(root.Position)
+    if not rootVisible or rootPoint.Z <= 0 then
         return nil
     end
 
     local boxCFrame, boxSize = character:GetBoundingBox()
     local half = boxSize * 0.5
-
     local corners = {
         Vector3.new(-half.X, -half.Y, -half.Z),
         Vector3.new(-half.X, -half.Y, half.Z),
@@ -324,14 +411,13 @@ local function getCharacterScreenBounds(character)
 
     for _, offset in ipairs(corners) do
         local worldPoint = boxCFrame:PointToWorldSpace(offset)
-        local viewportPoint = Camera:WorldToViewportPoint(worldPoint)
-
-        if viewportPoint.Z > 0 then
+        local point = Camera:WorldToViewportPoint(worldPoint)
+        if point.Z > 0 then
             validPoints += 1
-            minX = math.min(minX, viewportPoint.X)
-            minY = math.min(minY, viewportPoint.Y)
-            maxX = math.max(maxX, viewportPoint.X)
-            maxY = math.max(maxY, viewportPoint.Y)
+            minX = math.min(minX, point.X)
+            minY = math.min(minY, point.Y)
+            maxX = math.max(maxX, point.X)
+            maxY = math.max(maxY, point.Y)
         end
     end
 
@@ -341,7 +427,6 @@ local function getCharacterScreenBounds(character)
 
     local width = maxX - minX
     local height = maxY - minY
-
     if width <= 1 or height <= 1 or width > 3000 or height > 3000 then
         return nil
     end
@@ -362,7 +447,6 @@ local function updateESP()
     for _, targetPlayer in ipairs(Players:GetPlayers()) do
         if targetPlayer ~= LocalPlayer then
             createPlayerDrawings(targetPlayer)
-
             local bundle = playerDrawings[targetPlayer]
             if bundle then
                 local character = targetPlayer.Character
@@ -372,7 +456,6 @@ local function updateESP()
                     hideBundle(bundle)
                 else
                     local minX, minY, width, height = getCharacterScreenBounds(character)
-
                     if not minX then
                         hideBundle(bundle)
                     else
@@ -384,7 +467,6 @@ local function updateESP()
                             local ratio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
                             local barWidth = 4
                             local barX = minX - 8
-
                             bundle.HpBackground.Position = Vector2.new(barX, minY)
                             bundle.HpBackground.Size = Vector2.new(barWidth, height)
                             bundle.HpBackground.Visible = true
@@ -409,9 +491,9 @@ local function updateESP()
     end
 end
 
-espButton.MouseButton1Click:Connect(function()
+connect(espButton.MouseButton1Click, function()
     if not drawingSupported then
-        status.Text = "ESP unavailable: Drawing API missing"
+        drawingStatus.Text = "ESP unavailable: Drawing API missing"
         return
     end
 
@@ -425,7 +507,7 @@ espButton.MouseButton1Click:Connect(function()
     end
 end)
 
-hpButton.MouseButton1Click:Connect(function()
+connect(hpButton.MouseButton1Click, function()
     healthBarEnabled = not healthBarEnabled
     setToggleVisual(hpButton, "Health Bar", healthBarEnabled)
 
@@ -437,35 +519,221 @@ hpButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Create bundles for current players and maintain them on join/leave.
 for _, targetPlayer in ipairs(Players:GetPlayers()) do
     createPlayerDrawings(targetPlayer)
 end
 
-table.insert(connections, Players.PlayerAdded:Connect(function(targetPlayer)
+connect(Players.PlayerAdded, function(targetPlayer)
     task.defer(createPlayerDrawings, targetPlayer)
-end))
+end)
 
-table.insert(connections, Players.PlayerRemoving:Connect(function(targetPlayer)
+connect(Players.PlayerRemoving, function(targetPlayer)
     removePlayerDrawings(targetPlayer)
-end))
+end)
 
-table.insert(connections, RunService.RenderStepped:Connect(updateESP))
+connect(RunService.RenderStepped, updateESP)
 
--- Drag window by topbar.
+-- Movement page -------------------------------------------------------------
+local movementAllowed = RunService:IsStudio()
+    or (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == LocalPlayer.UserId)
+
+local movementInfo = makeInfoLabel(
+    movementPage,
+    movementAllowed and "Movement controls: enabled for this test session" or "Movement controls: locked in public servers",
+    58
+)
+movementInfo.TextColor3 = movementAllowed and Color3.fromRGB(125, 190, 135) or Color3.fromRGB(205, 150, 100)
+
+local speedEnabled = false
+local jumpEnabled = false
+local speedValue = 24
+local jumpValue = 70
+
+local speedButton = makeToggle(movementPage, "Speed", "Speed", 94)
+local jumpButton = makeToggle(movementPage, "Jump", "Jump", 182)
+
+local function makeValueControls(page, y, initialText)
+    local minus = Instance.new("TextButton")
+    minus.Position = UDim2.fromOffset(230, y)
+    minus.Size = UDim2.fromOffset(34, 34)
+    minus.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+    minus.BorderSizePixel = 0
+    minus.AutoButtonColor = false
+    minus.Font = Enum.Font.Code
+    minus.Text = "-"
+    minus.TextColor3 = Color3.fromRGB(230, 230, 230)
+    minus.TextSize = 18
+    minus.Parent = page
+
+    local value = Instance.new("TextLabel")
+    value.Position = UDim2.fromOffset(270, y)
+    value.Size = UDim2.fromOffset(70, 34)
+    value.BackgroundColor3 = Color3.fromRGB(32, 32, 32)
+    value.BorderSizePixel = 0
+    value.Font = Enum.Font.Code
+    value.Text = initialText
+    value.TextColor3 = Color3.fromRGB(225, 225, 225)
+    value.TextSize = 14
+    value.Parent = page
+
+    local plus = Instance.new("TextButton")
+    plus.Position = UDim2.fromOffset(346, y)
+    plus.Size = UDim2.fromOffset(34, 34)
+    plus.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+    plus.BorderSizePixel = 0
+    plus.AutoButtonColor = false
+    plus.Font = Enum.Font.Code
+    plus.Text = "+"
+    plus.TextColor3 = Color3.fromRGB(230, 230, 230)
+    plus.TextSize = 18
+    plus.Parent = page
+
+    for _, object in ipairs({minus, value, plus}) do
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 4)
+        corner.Parent = object
+    end
+
+    return minus, value, plus
+end
+
+local speedMinus, speedLabel, speedPlus = makeValueControls(movementPage, 94, tostring(speedValue))
+local jumpMinus, jumpLabel, jumpPlus = makeValueControls(movementPage, 182, tostring(jumpValue))
+
+makeInfoLabel(movementPage, "WalkSpeed value", 134)
+makeInfoLabel(movementPage, "JumpPower / approximate jump strength", 222)
+
+local baseWalkSpeed = 16
+local baseJumpPower = 50
+local baseJumpHeight = 7.2
+
+local function getHumanoid()
+    local character = LocalPlayer.Character
+    return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function captureMovementDefaults()
+    local humanoid = getHumanoid()
+    if not humanoid then
+        return
+    end
+
+    baseWalkSpeed = humanoid.WalkSpeed
+    baseJumpPower = humanoid.JumpPower
+    baseJumpHeight = humanoid.JumpHeight
+end
+
+local function applyMovement()
+    if not movementAllowed then
+        return
+    end
+
+    local humanoid = getHumanoid()
+    if not humanoid then
+        return
+    end
+
+    humanoid.WalkSpeed = speedEnabled and speedValue or baseWalkSpeed
+
+    if humanoid.UseJumpPower then
+        humanoid.JumpPower = jumpEnabled and jumpValue or baseJumpPower
+    else
+        local scaledHeight = math.clamp(7.2 * (jumpValue / 50), 2, 30)
+        humanoid.JumpHeight = jumpEnabled and scaledHeight or baseJumpHeight
+    end
+end
+
+captureMovementDefaults()
+
+connect(LocalPlayer.CharacterAdded, function()
+    task.wait(0.2)
+    captureMovementDefaults()
+    applyMovement()
+end)
+
+connect(speedButton.MouseButton1Click, function()
+    if not movementAllowed then
+        movementInfo.Text = "Blocked: use Studio or your own private server"
+        return
+    end
+    speedEnabled = not speedEnabled
+    setToggleVisual(speedButton, "Speed", speedEnabled)
+    applyMovement()
+end)
+
+connect(jumpButton.MouseButton1Click, function()
+    if not movementAllowed then
+        movementInfo.Text = "Blocked: use Studio or your own private server"
+        return
+    end
+    jumpEnabled = not jumpEnabled
+    setToggleVisual(jumpButton, "Jump", jumpEnabled)
+    applyMovement()
+end)
+
+connect(speedMinus.MouseButton1Click, function()
+    speedValue = math.clamp(speedValue - 4, 8, 60)
+    speedLabel.Text = tostring(speedValue)
+    applyMovement()
+end)
+
+connect(speedPlus.MouseButton1Click, function()
+    speedValue = math.clamp(speedValue + 4, 8, 60)
+    speedLabel.Text = tostring(speedValue)
+    applyMovement()
+end)
+
+connect(jumpMinus.MouseButton1Click, function()
+    jumpValue = math.clamp(jumpValue - 10, 20, 120)
+    jumpLabel.Text = tostring(jumpValue)
+    applyMovement()
+end)
+
+connect(jumpPlus.MouseButton1Click, function()
+    jumpValue = math.clamp(jumpValue + 10, 20, 120)
+    jumpLabel.Text = tostring(jumpValue)
+    applyMovement()
+end)
+
+-- Category switching --------------------------------------------------------
+local selectedCategory = "Visual"
+
+local function selectCategory(name)
+    selectedCategory = name
+
+    for pageName, page in pairs(pages) do
+        page.Visible = pageName == name
+    end
+
+    for buttonName, button in pairs(categoryButtons) do
+        local selected = buttonName == name
+        button.BackgroundColor3 = selected and Color3.fromRGB(52, 72, 58) or Color3.fromRGB(35, 35, 35)
+        button.TextColor3 = selected and Color3.fromRGB(235, 235, 235) or Color3.fromRGB(190, 190, 190)
+    end
+end
+
+for name, button in pairs(categoryButtons) do
+    connect(button.MouseButton1Click, function()
+        selectCategory(name)
+    end)
+end
+
+selectCategory(selectedCategory)
+
+-- Window dragging -----------------------------------------------------------
 local dragging = false
 local dragStart
 local startPosition
 
-table.insert(connections, topbar.InputBegan:Connect(function(input)
+connect(topbar.InputBegan, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = true
         dragStart = input.Position
         startPosition = window.Position
     end
-end))
+end)
 
-table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+connect(UserInputService.InputChanged, function(input)
     if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - dragStart
         window.Position = UDim2.new(
@@ -475,15 +743,15 @@ table.insert(connections, UserInputService.InputChanged:Connect(function(input)
             startPosition.Y.Offset + delta.Y
         )
     end
-end))
+end)
 
-table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+connect(UserInputService.InputEnded, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = false
     end
-end))
+end)
 
-table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+connect(UserInputService.InputBegan, function(input, gameProcessed)
     if gameProcessed then
         return
     end
@@ -491,13 +759,19 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, ga
     if input.KeyCode == Enum.KeyCode.RightShift then
         window.Visible = not window.Visible
     end
-end))
+end)
 
 local function cleanup()
     if destroyed then
         return
     end
     destroyed = true
+
+    if movementAllowed then
+        speedEnabled = false
+        jumpEnabled = false
+        applyMovement()
+    end
 
     disconnectAll()
     removeAllDrawings()
@@ -509,4 +783,4 @@ end
 
 env.BezNigativaCleanup = cleanup
 
-print("[BezNigativa] Loaded | ESP + optional health bars")
+print("[BezNigativa] Loaded | Combat / Movement / Visual / Other")
