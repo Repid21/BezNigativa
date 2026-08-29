@@ -4,8 +4,6 @@
 
 ## Запуск через Xeno
 
-Вставить в executor:
-
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/main/main.lua"))()
 ```
@@ -14,15 +12,27 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/m
 
 - `RightShift` — открыть / закрыть GUI.
 - ЛКМ по верхней панели — перетащить окно.
-- `ESP` — показывает 2D-квадрат вокруг других живых игроков.
-- `Health Bar` — включает / выключает полоску здоровья рядом с ESP-квадратом.
 
-## Xeno / Drawing API
+## Категории
 
-ESP рисуется через `Drawing.new("Square")`. При запуске GUI показывает статус Drawing API:
+### Combat
+Пока пусто.
 
-- `Drawing API: ready` — ESP должен работать.
-- `Drawing API: unavailable in this Xeno build` — текущая сборка executor не предоставляет Drawing API.
+### Movement
+- `Speed` — тест изменения WalkSpeed.
+- `Jump` — тест изменения JumpPower / JumpHeight.
+- Значения меняются кнопками `-` и `+`.
+
+Movement намеренно работает только в Roblox Studio или в приватном сервере, владельцем которого является LocalPlayer. В обычном публичном сервере эти элементы заблокированы.
+
+### Visual
+- `ESP` — 2D-квадрат вокруг других живых игроков.
+- `Health Bar` — полоска здоровья рядом с ESP-квадратом.
+
+ESP использует `Drawing.new("Square")`. В меню показывается статус Drawing API.
+
+### Other
+Пока пусто.
 
 ## Файл для загрузки
 
