@@ -1,6 +1,6 @@
 # BezNigativa
 
-Базовый Roblox ClickGUI / executor compatibility test на Luau.
+Базовый Roblox ClickGUI / Xeno compatibility test на Luau.
 
 ## Запуск через Xeno
 
@@ -14,17 +14,15 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/m
 
 - `RightShift` — открыть / закрыть GUI.
 - ЛКМ по верхней панели — перетащить окно.
-- `Test Module` — безопасный тестовый toggle без игровой логики.
+- `ESP` — показывает 2D-квадрат вокруг других живых игроков.
+- `Health Bar` — включает / выключает полоску здоровья рядом с ESP-квадратом.
 
-## Что проверяет
+## Xeno / Drawing API
 
-Если окно `BezNigativa` появилось, значит Xeno смог:
+ESP рисуется через `Drawing.new("Square")`. При запуске GUI показывает статус Drawing API:
 
-1. получить raw-файл с GitHub через `game:HttpGet`;
-2. выполнить полученный Luau-код через `loadstring`;
-3. создать клиентский GUI и обработать клавиатуру/мышь.
-
-Скрипт намеренно использует базовые Roblox/Luau API. `gethui()` используется только если функция доступна; иначе используется fallback.
+- `Drawing API: ready` — ESP должен работать.
+- `Drawing API: unavailable in this Xeno build` — текущая сборка executor не предоставляет Drawing API.
 
 ## Файл для загрузки
 
