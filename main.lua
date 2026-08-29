@@ -250,12 +250,10 @@ local function createToggle(parent, x, y, width, labelText, initial, callback)
     refresh()
 
     bind(button.MouseButton1Click:Connect(function()
-        local requested = not state
-        local accepted = callback and callback(requested)
-        if accepted == false then
-            return
+        state = not state
+        if callback then
+            callback(state)
         end
-        state = requested
         refresh()
     end))
 
@@ -362,13 +360,12 @@ local espEnabled = false
 local healthBarEnabled = false
 
 local espToggle = createToggle(VisualPage, 18, 78, 190, "ESP", false, function(value)
-    if value and not drawingSupported then return false end
     espEnabled = value
     if not value then
         for _, bundle in pairs(playerDrawings) do
-            bundle.Box.Visible = false
-            bundle.HpBackground.Visible = false
-            bundle.HpFill.Visible = false
+            if bundle.Box then bundle.Box.Visible = false end
+            if bundle.HpBackground then bundle.HpBackground.Visible = false end
+            if bundle.HpFill then bundle.HpFill.Visible = false end
         end
     end
 end)
@@ -377,8 +374,8 @@ local hpToggle = createToggle(VisualPage, 222, 78, 190, "Health Bar", false, fun
     healthBarEnabled = value
     if not value then
         for _, bundle in pairs(playerDrawings) do
-            bundle.HpBackground.Visible = false
-            bundle.HpFill.Visible = false
+            if bundle.HpBackground then bundle.HpBackground.Visible = false end
+            if bundle.HpFill then bundle.HpFill.Visible = false end
         end
     end
 end)
@@ -467,16 +464,16 @@ local function updateESP()
 
             if not bundle or not espEnabled or not character or not humanoid or humanoid.Health <= 0 then
                 if bundle then
-                    bundle.Box.Visible = false
-                    bundle.HpBackground.Visible = false
-                    bundle.HpFill.Visible = false
+                    if bundle.Box then bundle.Box.Visible = false end
+                    if bundle.HpBackground then bundle.HpBackground.Visible = false end
+                    if bundle.HpFill then bundle.HpFill.Visible = false end
                 end
             else
                 local x, y, width, height = screenBounds(character)
                 if not x then
-                    bundle.Box.Visible = false
-                    bundle.HpBackground.Visible = false
-                    bundle.HpFill.Visible = false
+                    if bundle.Box then bundle.Box.Visible = false end
+                    if bundle.HpBackground then bundle.HpBackground.Visible = false end
+                    if bundle.HpFill then bundle.HpFill.Visible = false end
                 else
                     bundle.Box.Position = Vector2.new(x, y)
                     bundle.Box.Size = Vector2.new(width, height)
@@ -500,8 +497,8 @@ local function updateESP()
                         )
                         bundle.HpFill.Visible = true
                     else
-                        bundle.HpBackground.Visible = false
-                        bundle.HpFill.Visible = false
+                        if bundle.HpBackground then bundle.HpBackground.Visible = false end
+                        if bundle.HpFill then bundle.HpFill.Visible = false end
                     end
                 end
             end
