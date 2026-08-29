@@ -1,0 +1,223 @@
+name: Fix Movement Runtime V2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-movement-runtime-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch movement runtime robustly
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('main.lua')
+          s = p.read_text(encoding='utf-8')
+
+          if 'local safeEnvironment =' not in s:
+              needle = 'local env = (getgenv and getgenv()) or _G'
+              insert = '''-- Runtime-changing modules are allowed in Studio, an owned private server,
+          -- or a public experience owned by the current Roblox user.
+          local safeEnvironment = RunService:IsStudio()
+              or (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == LocalPlayer.UserId)
+              or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
+
+          local env = (getgenv and getgenv()) or _G'''
+              if needle not in s:
+                  raise SystemExit('env insertion point not found')
+              s = s.replace(needle, insert, 1)
+
+          if 'local flyVelocity = nil' not in s:
+              needle = 'local noclipOriginalCollide = {}'
+              insert = '''local noclipOriginalCollide = {}
+          local flyVelocity = nil
+          local flyGyro = nil
+          local flyRoot = nil'''
+              if needle not in s:
+                  raise SystemExit('fly variable insertion point not found')
+              s = s.replace(needle, insert, 1)
+
+          new_set_fly = '''local function destroyFlyControllers()
+              if flyVelocity then
+                  pcall(function() flyVelocity:Destroy() end)
+                  flyVelocity = nil
+              end
+              if flyGyro then
+                  pcall(function() flyGyro:Destroy() end)
+                  flyGyro = nil
+              end
+              flyRoot = nil
+          end
+
+          local function setFlyState(enabled)
+              local humanoid = getHumanoid()
+              local root = getRoot()
+
+              if not enabled then
+                  destroyFlyControllers()
+                  if humanoid then
+                      humanoid.PlatformStand = false
+                      humanoid.AutoRotate = true
+                      humanoid.Sit = false
+                  end
+                  if root then
+                      root.AssemblyLinearVelocity = Vector3.zero
+                      root.AssemblyAngularVelocity = Vector3.zero
+                  end
+                  return
+              end
+
+              if not humanoid or not root then return end
+
+              -- Do not use PlatformStand for flight: it makes the avatar collapse/sit.
+              humanoid.PlatformStand = false
+              humanoid.Sit = false
+              humanoid.AutoRotate = false
+
+              if flyRoot ~= root or not flyVelocity or not flyVelocity.Parent or not flyGyro or not flyGyro.Parent then
+                  destroyFlyControllers()
+                  flyRoot = root
+
+                  flyVelocity = Instance.new("BodyVelocity")
+                  flyVelocity.Name = "BezNigativaFlyVelocity"
+                  flyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                  flyVelocity.P = 15000
+                  flyVelocity.Velocity = Vector3.zero
+                  flyVelocity.Parent = root
+
+                  flyGyro = Instance.new("BodyGyro")
+                  flyGyro.Name = "BezNigativaFlyGyro"
+                  flyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+                  flyGyro.P = 20000
+                  flyGyro.D = 700
+                  flyGyro.CFrame = root.CFrame
+                  flyGyro.Parent = root
+              end
+          end'''
+
+          s, n = re.subn(
+              r'local function setFlyState\(enabled\).*?\nend\n\nlocal function captureDefaults',
+              new_set_fly + '\n\nlocal function captureDefaults',
+              s,
+              count=1,
+              flags=re.S,
+          )
+          if n != 1:
+              raise SystemExit('setFlyState block not replaced')
+
+          new_update_fly = '''local function updateFly()
+              if not flyEnabled or not safeEnvironment then return end
+
+              local humanoid = getHumanoid()
+              local root = getRoot()
+              Camera = workspace.CurrentCamera or Camera
+              if not humanoid or not root or not Camera then return end
+
+              setFlyState(true)
+              if not flyVelocity or not flyGyro then return end
+
+              humanoid.PlatformStand = false
+              humanoid.Sit = false
+              humanoid.AutoRotate = false
+
+              local look = Camera.CFrame.LookVector
+              local right = Camera.CFrame.RightVector
+              local forward = Vector3.new(look.X, 0, look.Z)
+              local strafe = Vector3.new(right.X, 0, right.Z)
+
+              if forward.Magnitude > 0.001 then forward = forward.Unit end
+              if strafe.Magnitude > 0.001 then strafe = strafe.Unit end
+
+              local direction = Vector3.zero
+              if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += forward end
+              if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= forward end
+              if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += strafe end
+              if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= strafe end
+              if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
+              if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
+
+              if direction.Magnitude > 0.001 then
+                  direction = direction.Unit
+              end
+
+              -- BodyVelocity cancels gravity as well, so zero input gives a real hover.
+              flyVelocity.Velocity = direction * flySpeed
+
+              local face = forward
+              if face.Magnitude <= 0.001 then
+                  face = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+              end
+              if face.Magnitude > 0.001 then
+                  flyGyro.CFrame = CFrame.lookAt(root.Position, root.Position + face.Unit)
+              end
+          end'''
+
+          s, n = re.subn(
+              r'local function updateFly\(\).*?\nend\n\nlocal function updateMovement',
+              new_update_fly + '\n\nlocal function updateMovement',
+              s,
+              count=1,
+              flags=re.S,
+          )
+          if n != 1:
+              raise SystemExit('updateFly block not replaced')
+
+          s = s.replace(
+              'if humanoid.UseJumpPower then humanoid.JumpPower = jumpValue else humanoid.JumpHeight = math.max(7.2, jumpValue / 10) end',
+              '''if humanoid.UseJumpPower then
+                      humanoid.JumpPower = jumpValue
+                  else
+                      humanoid.JumpHeight = math.max(defaults.JumpHeight, (jumpValue * jumpValue) / (2 * workspace.Gravity))
+                  end''',
+              1,
+          )
+
+          loop_old = '''bind(RunService.RenderStepped:Connect(function()
+              Camera = workspace.CurrentCamera or Camera
+              updateESP()
+              updateCombat()
+          end))'''
+          loop_new = '''bind(RunService.RenderStepped:Connect(function()
+              Camera = workspace.CurrentCamera or Camera
+              updateESP()
+              updateCombat()
+              -- Reinforce movement settings because some place scripts rewrite them every frame.
+              updateMovement()
+          end))'''
+          if loop_old in s:
+              s = s.replace(loop_old, loop_new, 1)
+
+          cleanup_old = '''    destroyed = true
+
+              local humanoid = getHumanoid()'''
+          if cleanup_old not in s:
+              cleanup_old = '''    destroyed = true
+
+              local humanoid = getHumanoid()'''.replace('              ', '    ')
+          cleanup_new = cleanup_old.replace(
+              'local humanoid = getHumanoid()',
+              'restoreNoclip()\n    setFlyState(false)\n\n    local humanoid = getHumanoid()',
+          )
+          if cleanup_old in s:
+              s = s.replace(cleanup_old, cleanup_new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.lua
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Fix Movement runtime and Fly physics"
+          git push
