@@ -16,9 +16,6 @@ if not LocalPlayer then
     return
 end
 
-local safeEnvironment = RunService:IsStudio()
-    or (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == LocalPlayer.UserId)
-
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
     pcall(env.BezNigativaCleanup)
@@ -580,14 +577,12 @@ bind(LocalPlayer.CharacterAdded:Connect(function()
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
-    if value and not safeEnvironment then return false end
     speedEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then humanoid.WalkSpeed = defaults.WalkSpeed end
 end)
 
 local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
-    if value and not safeEnvironment then return false end
     jumpEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then
@@ -596,7 +591,6 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
 end)
 
 local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
-    if value and not safeEnvironment then return false end
     noclipEnabled = value
     if not value then
         restoreNoclip()
@@ -604,7 +598,6 @@ local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, f
 end)
 
 local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
-    if value and not safeEnvironment then return false end
     flyEnabled = value
     setFlyState(value)
 end)
