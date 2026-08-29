@@ -521,13 +521,43 @@ pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled in this test en
 
 local speedEnabled = false
 local jumpEnabled = false
+local noclipEnabled = false
+local flyEnabled = false
 local speedValue = 24
 local jumpValue = 70
+local flySpeed = 45
 local defaults = {WalkSpeed = 16, JumpPower = 50, JumpHeight = 7.2}
+local noclipOriginalCollide = {}
 
 local function getHumanoid()
     local character = LocalPlayer.Character
     return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot()
+    local character = LocalPlayer.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function restoreNoclip()
+    for part, oldValue in pairs(noclipOriginalCollide) do
+        if part and part.Parent then
+            pcall(function() part.CanCollide = oldValue end)
+        end
+    end
+    table.clear(noclipOriginalCollide)
+end
+
+local function setFlyState(enabled)
+    local humanoid = getHumanoid()
+    local root = getRoot()
+    if humanoid then
+        humanoid.PlatformStand = enabled
+    end
+    if root and not enabled then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    end
 end
 
 local function captureDefaults()
@@ -541,8 +571,12 @@ end
 
 captureDefaults()
 bind(LocalPlayer.CharacterAdded:Connect(function()
+    restoreNoclip()
     task.wait(0.2)
     captureDefaults()
+    if flyEnabled and safeEnvironment then
+        setFlyState(true)
+    end
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
@@ -561,17 +595,99 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
     end
 end)
 
-local getSpeed = createStepper(MovementPage, 130, "Speed value", speedValue, 16, 100, 4, function(v) speedValue = v end)
-local getJump = createStepper(MovementPage, 174, "Jump value", jumpValue, 30, 150, 5, function(v) jumpValue = v end)
+local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
+    if value and not safeEnvironment then return false end
+    noclipEnabled = value
+    if not value then
+        restoreNoclip()
+    end
+end)
+
+local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
+    if value and not safeEnvironment then return false end
+    flyEnabled = value
+    setFlyState(value)
+end)
+
+local getSpeed = createStepper(MovementPage, 174, "Speed value", speedValue, 16, 100, 4, function(v) speedValue = v end)
+local getJump = createStepper(MovementPage, 216, "Jump value", jumpValue, 30, 150, 5, function(v) jumpValue = v end)
+local getFlySpeed = createStepper(MovementPage, 258, "Fly speed", flySpeed, 10, 200, 5, function(v) flySpeed = v end)
+
+local flyHint = Instance.new("TextLabel")
+flyHint.BackgroundTransparency = 1
+flyHint.Position = UDim2.fromOffset(18, 306)
+flyHint.Size = UDim2.new(1, -36, 0, 42)
+flyHint.Font = Enum.Font.Code
+flyHint.Text = "Fly controls: WASD | Space: up | LeftCtrl: down"
+flyHint.TextColor3 = Color3.fromRGB(140, 140, 140)
+flyHint.TextSize = 12
+flyHint.TextWrapped = true
+flyHint.TextXAlignment = Enum.TextXAlignment.Left
+flyHint.TextYAlignment = Enum.TextYAlignment.Top
+flyHint.Parent = MovementPage
+
+local function updateNoclip()
+    if not noclipEnabled or not safeEnvironment then return end
+    local character = LocalPlayer.Character
+    if not character then return end
+
+    for _, object in ipairs(character:GetDescendants()) do
+        if object:IsA("BasePart") then
+            if noclipOriginalCollide[object] == nil then
+                noclipOriginalCollide[object] = object.CanCollide
+            end
+            object.CanCollide = false
+        end
+    end
+end
+
+local function updateFly()
+    if not flyEnabled or not safeEnvironment then return end
+
+    local humanoid = getHumanoid()
+    local root = getRoot()
+    Camera = workspace.CurrentCamera or Camera
+    if not humanoid or not root or not Camera then return end
+
+    if not humanoid.PlatformStand then
+        humanoid.PlatformStand = true
+    end
+
+    local look = Camera.CFrame.LookVector
+    local right = Camera.CFrame.RightVector
+    local forward = Vector3.new(look.X, 0, look.Z)
+    local strafe = Vector3.new(right.X, 0, right.Z)
+
+    if forward.Magnitude > 0.001 then forward = forward.Unit end
+    if strafe.Magnitude > 0.001 then strafe = strafe.Unit end
+
+    local direction = Vector3.zero
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += forward end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= forward end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += strafe end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= strafe end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
+
+    if direction.Magnitude > 0.001 then
+        direction = direction.Unit
+    end
+
+    root.AssemblyLinearVelocity = direction * flySpeed
+    root.AssemblyAngularVelocity = Vector3.zero
+end
 
 local function updateMovement()
     if not safeEnvironment then return end
     local humanoid = getHumanoid()
-    if not humanoid then return end
-    if speedEnabled then humanoid.WalkSpeed = speedValue end
-    if jumpEnabled then
-        if humanoid.UseJumpPower then humanoid.JumpPower = jumpValue else humanoid.JumpHeight = math.max(7.2, jumpValue / 10) end
+    if humanoid then
+        if speedEnabled then humanoid.WalkSpeed = speedValue end
+        if jumpEnabled then
+            if humanoid.UseJumpPower then humanoid.JumpPower = jumpValue else humanoid.JumpHeight = math.max(7.2, jumpValue / 10) end
+        end
     end
+    updateNoclip()
+    updateFly()
 end
 
 -- COMBAT / SAFE CAMERA ASSIST
@@ -819,7 +935,15 @@ local function cleanup()
         pcall(function()
             if humanoid.UseJumpPower then humanoid.JumpPower = defaults.JumpPower else humanoid.JumpHeight = defaults.JumpHeight end
         end)
+        pcall(function() humanoid.PlatformStand = false end)
     end
+
+    local root = getRoot()
+    if root then
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+        pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
+    end
+    restoreNoclip()
 
     for _, connection in ipairs(connections) do
         pcall(function() connection:Disconnect() end)

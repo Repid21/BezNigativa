@@ -28,6 +28,8 @@ Combat намеренно работает только в Roblox Studio или 
 ### Movement
 - `Speed` — тест изменения WalkSpeed.
 - `Jump` — тест изменения JumpPower / JumpHeight.
+- `NoClip` — отключает коллизии персонажа.
+- `Fly` — полёт с регулируемой скоростью (`WASD`, `Space`, `LeftCtrl`).
 - Значения меняются кнопками `-` и `+`.
 
 Movement работает только в Roblox Studio или в приватном сервере, владельцем которого является LocalPlayer.
