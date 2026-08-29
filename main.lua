@@ -575,7 +575,7 @@ local function updateMovement()
 end
 
 -- COMBAT / SAFE CAMERA ASSIST
-pageTitle(CombatPage, "Combat", safeEnvironment and "Camera assist test | first person" or "Locked: Studio / your private server only")
+pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: Studio / your private server only")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
@@ -588,7 +588,7 @@ local aimGroups = {
     Legs = false,
 }
 
-local cameraToggle = createToggle(CombatPage, 18, 78, 190, "Camera Assist", false, function(value)
+local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
     if value and not safeEnvironment then return false end
     cameraAssistEnabled = value
 end)
@@ -627,7 +627,7 @@ combatStatus.BackgroundTransparency = 1
 combatStatus.Position = UDim2.fromOffset(18, 340)
 combatStatus.Size = UDim2.new(1, -36, 0, 24)
 combatStatus.Font = Enum.Font.Code
-combatStatus.Text = safeEnvironment and "Enter first person to use camera assist" or "Camera assist disabled on public servers"
+combatStatus.Text = safeEnvironment and "Enter first person to use AimBot" or "AimBot disabled on public servers"
 combatStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
 combatStatus.TextSize = 12
 combatStatus.TextXAlignment = Enum.TextXAlignment.Left
@@ -741,7 +741,7 @@ local function updateCombat()
     if not cameraAssistEnabled or not safeEnvironment then return end
 
     if not isFirstPerson() then
-        combatStatus.Text = "Enter first person to use camera assist"
+        combatStatus.Text = "Enter first person to use AimBot"
         return
     end
 

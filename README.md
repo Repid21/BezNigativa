@@ -16,7 +16,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/m
 ## Категории
 
 ### Combat
-- `Camera Assist` — плавно поворачивает камеру к ближайшей разрешённой точке внутри FOV.
+- `AimBot` — плавно поворачивает камеру к ближайшей разрешённой точке внутри FOV.
 - `FOV radius` — радиус экранного круга захвата.
 - `Smoothness` — плавность движения камеры.
 - Зоны можно комбинировать: `Head`, `Neck`, `Body`, `Arms`, `Legs`.
