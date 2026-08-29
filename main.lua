@@ -965,4 +965,52 @@ bind(UserInputService.InputChanged:Connect(function(input)
 end))
 
 bind(UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Mouse
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end))
+
+bind(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        window.Visible = not window.Visible
+    end
+end))
+
+setPage("Combat")
+
+local function cleanup()
+    if destroyed then return end
+    destroyed = true
+
+    restoreNoclip()
+    setFlyState(false)
+
+    local humanoid = getHumanoid()
+    if humanoid then
+        pcall(function() humanoid.WalkSpeed = defaults.WalkSpeed end)
+        pcall(function()
+            if humanoid.UseJumpPower then humanoid.JumpPower = defaults.JumpPower else humanoid.JumpHeight = defaults.JumpHeight end
+        end)
+        pcall(function() humanoid.PlatformStand = false end)
+    end
+
+    local root = getRoot()
+    if root then
+        pcall(function() root.AssemblyLinearVelocity = Vector3.zero end)
+        pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
+    end
+    restoreNoclip()
+
+    for _, connection in ipairs(connections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(connections)
+
+    cleanupDrawings()
+    pcall(function() gui:Destroy() end)
+end
+
+env.BezNigativaCleanup = cleanup
+
+print("[BezNigativa] Loaded | Combat / Movement / Visual / Other")
