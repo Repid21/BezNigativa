@@ -910,7 +910,11 @@ local fovRadius = 140
 local smoothValue = 4
 local wallCheckEnabled = true
 local smoothedAimDirection = nil
-local lastRawCameraRotation = nil
+local lastRawCameraYaw = nil
+local lastRawCameraPitch = nil
+local aimBind = nil
+local aimBindMode = "Toggle"
+local waitingForAimBind = false
 local aimGroups = {
     Head = true,
     Neck = false,
@@ -923,7 +927,8 @@ local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, func
     cameraAssistEnabled = value
     if not value then
         smoothedAimDirection = nil
-        lastRawCameraRotation = nil
+        lastRawCameraYaw = nil
+        lastRawCameraPitch = nil
     end
 end)
 
@@ -933,6 +938,39 @@ local getSmooth, setSmooth = createStepper(CombatPage, 172, "Smooth", smoothValu
 local wallCheckToggle = createToggle(CombatPage, 222, 78, 190, "Wall Check", true, function(value)
     wallCheckEnabled = value
 end)
+
+local function setAimEnabledFromBind(value, saveState)
+    cameraAssistEnabled = value == true
+    cameraToggle.Set(cameraAssistEnabled)
+    if not cameraAssistEnabled then
+        smoothedAimDirection = nil
+        lastRawCameraYaw = nil
+        lastRawCameraPitch = nil
+    end
+    if saveState and requestConfigSave then requestConfigSave() end
+end
+
+local function inputToAimBind(input)
+    if input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then
+        return {kind = "KeyCode", name = input.KeyCode.Name}
+    end
+
+    local inputType = input.UserInputType
+    if inputType == Enum.UserInputType.MouseButton1
+        or inputType == Enum.UserInputType.MouseButton2
+        or inputType == Enum.UserInputType.MouseButton3 then
+        return {kind = "UserInputType", name = inputType.Name}
+    end
+    return nil
+end
+
+local function inputMatchesAimBind(input)
+    if not aimBind then return false end
+    if aimBind.kind == "KeyCode" then
+        return input.KeyCode and input.KeyCode.Name == aimBind.name
+    end
+    return input.UserInputType and input.UserInputType.Name == aimBind.name
+end
 
 local groupsLabel = Instance.new("TextLabel")
 groupsLabel.BackgroundTransparency = 1
@@ -960,14 +998,65 @@ for groupName, pos in pairs(groupPositions) do
     end)
 end
 
+local aimBindButton = Instance.new("TextButton")
+aimBindButton.Position = UDim2.fromOffset(18, 334)
+aimBindButton.Size = UDim2.fromOffset(260, 34)
+aimBindButton.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+aimBindButton.BorderSizePixel = 0
+aimBindButton.AutoButtonColor = false
+aimBindButton.Font = Enum.Font.Code
+aimBindButton.TextColor3 = Color3.fromRGB(230, 230, 230)
+aimBindButton.TextSize = 12
+aimBindButton.Parent = CombatPage
+
+local aimModeButton = aimBindButton:Clone()
+aimModeButton.Position = UDim2.fromOffset(290, 334)
+aimModeButton.Size = UDim2.fromOffset(122, 34)
+aimModeButton.Parent = CombatPage
+
+for _, button in ipairs({aimBindButton, aimModeButton}) do
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = button
+end
+
+local function aimBindDisplayName()
+    if not aimBind then return "NONE" end
+    if aimBind.name == "MouseButton1" then return "Mouse1" end
+    if aimBind.name == "MouseButton2" then return "Mouse2" end
+    if aimBind.name == "MouseButton3" then return "Mouse3" end
+    return aimBind.name
+end
+
+local function refreshAimBindUI()
+    aimBindButton.Text = waitingForAimBind and "Bind: press key (ESC cancel)" or ("Bind: " .. aimBindDisplayName())
+    aimBindButton.BackgroundColor3 = waitingForAimBind and Color3.fromRGB(70, 75, 45) or Color3.fromRGB(43, 43, 43)
+    aimModeButton.Text = "Mode: " .. aimBindMode
+end
+
+bind(aimBindButton.MouseButton1Click:Connect(function()
+    waitingForAimBind = true
+    refreshAimBindUI()
+end))
+
+bind(aimModeButton.MouseButton1Click:Connect(function()
+    waitingForAimBind = false
+    aimBindMode = aimBindMode == "Hold" and "Toggle" or "Hold"
+    if aimBindMode == "Hold" then setAimEnabledFromBind(false, false) end
+    refreshAimBindUI()
+    if requestConfigSave then requestConfigSave() end
+end))
+
+refreshAimBindUI()
+
 local combatStatus = Instance.new("TextLabel")
 combatStatus.BackgroundTransparency = 1
-combatStatus.Position = UDim2.fromOffset(18, 340)
-combatStatus.Size = UDim2.new(1, -36, 0, 24)
+combatStatus.Position = UDim2.fromOffset(18, 372)
+combatStatus.Size = UDim2.new(1, -36, 0, 18)
 combatStatus.Font = Enum.Font.Code
 combatStatus.Text = "AimBot ready"
 combatStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
-combatStatus.TextSize = 12
+combatStatus.TextSize = 11
 combatStatus.TextXAlignment = Enum.TextXAlignment.Left
 combatStatus.Parent = CombatPage
 
@@ -1116,6 +1205,15 @@ local function getBestAimPoint()
     return bestPosition
 end
 
+local function directionAngles(direction)
+    local unit = direction.Magnitude > 0.001 and direction.Unit or Vector3.new(0, 0, -1)
+    return math.atan2(-unit.X, -unit.Z), math.asin(math.clamp(unit.Y, -1, 1))
+end
+
+local function shortestAngleDelta(from, to)
+    return (to - from + math.pi) % (math.pi * 2) - math.pi
+end
+
 local function updateCombat(deltaTime)
     Camera = workspace.CurrentCamera or Camera
     if not Camera then return end
@@ -1134,26 +1232,29 @@ local function updateCombat(deltaTime)
 
     if not cameraAssistEnabled then
         smoothedAimDirection = nil
-        lastRawCameraRotation = nil
+        lastRawCameraYaw = nil
+        lastRawCameraPitch = nil
         return
     end
 
-    -- CameraScript calculates its own raw camera angle before this callback.
-    -- Carry the raw per-frame rotation delta over to our held aim direction so
-    -- losing a target does not snap back, while mouse movement still works.
+    -- Keep only yaw/pitch deltas from CameraScript. Accumulating its full CFrame
+    -- also accumulated roll and could make the camera orbit after target loss.
     local rawCameraCFrame = Camera.CFrame
     local cameraPosition = rawCameraCFrame.Position
-    local rawCameraRotation = rawCameraCFrame - cameraPosition
-    if smoothedAimDirection and lastRawCameraRotation then
-        local rawDelta = lastRawCameraRotation:ToObjectSpace(rawCameraRotation)
-        local heldRotation = CFrame.lookAt(Vector3.zero, smoothedAimDirection)
-        local adjustedDirection = (heldRotation * rawDelta).LookVector
-        if adjustedDirection.Magnitude > 0.001 then
-            smoothedAimDirection = adjustedDirection.Unit
-            Camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + smoothedAimDirection)
-        end
+    local rawYaw, rawPitch = directionAngles(rawCameraCFrame.LookVector)
+    local manualCameraInput = UserInputService:GetMouseDelta().Magnitude > 0.01
+    if manualCameraInput and smoothedAimDirection and lastRawCameraYaw and lastRawCameraPitch then
+        local heldYaw, heldPitch = directionAngles(smoothedAimDirection)
+        local maxInputDelta = math.rad(18)
+        local yawDelta = math.clamp(shortestAngleDelta(lastRawCameraYaw, rawYaw), -maxInputDelta, maxInputDelta)
+        local pitchDelta = math.clamp(rawPitch - lastRawCameraPitch, -maxInputDelta, maxInputDelta)
+        heldYaw += yawDelta
+        heldPitch = math.clamp(heldPitch + pitchDelta, math.rad(-89), math.rad(89))
+        smoothedAimDirection = CFrame.fromOrientation(heldPitch, heldYaw, 0).LookVector
+        Camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + smoothedAimDirection)
     end
-    lastRawCameraRotation = rawCameraRotation
+    lastRawCameraYaw = rawYaw
+    lastRawCameraPitch = rawPitch
 
     local targetPosition = getBestAimPoint()
     if not targetPosition then
@@ -1179,7 +1280,10 @@ local function updateCombat(deltaTime)
         -- frame. Keep a separate accumulated direction so smoothing continues
         -- from the previous aimed angle instead of restarting every frame.
         local startDirection = smoothedAimDirection or Camera.CFrame.LookVector
-        local alpha = 1 - math.pow(1 - (1 / smooth), dt * 60)
+        -- Slightly softer than the previous lock: the player can pull away
+        -- with mouse input without making higher Smooth values unresponsive.
+        local alphaAt60Fps = 1 / (smooth * 2)
+        local alpha = 1 - math.pow(1 - alphaAt60Fps, dt * 60)
         local blended = startDirection:Lerp(desiredDirection, math.clamp(alpha, 0, 1))
         smoothedAimDirection = blended.Magnitude > 0.001 and blended.Unit or desiredDirection
     end
@@ -1211,7 +1315,7 @@ configStatus.Parent = OtherPage
 
 local function buildConfig()
     return {
-        version = 2,
+        version = 3,
         visual = {esp = espEnabled, healthBar = healthBarEnabled},
         movement = {
             speedEnabled = speedEnabled,
@@ -1227,6 +1331,8 @@ local function buildConfig()
             wallCheck = wallCheckEnabled,
             fov = fovRadius,
             smooth = smoothValue,
+            aimBind = aimBind and {kind = aimBind.kind, name = aimBind.name} or nil,
+            aimBindMode = aimBindMode,
             aimGroups = aimGroups,
         },
     }
@@ -1275,6 +1381,22 @@ local function applyConfig(data)
     end
     if type(combat.wallCheck) == "boolean" then wallCheckEnabled = combat.wallCheck; wallCheckToggle.Set(wallCheckEnabled) end
     if type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
+
+    if type(combat.aimBind) == "table"
+        and (combat.aimBind.kind == "KeyCode" or combat.aimBind.kind == "UserInputType")
+        and type(combat.aimBind.name) == "string" then
+        aimBind = {kind = combat.aimBind.kind, name = combat.aimBind.name}
+    else
+        aimBind = nil
+    end
+    if combat.aimBindMode == "Hold" or combat.aimBindMode == "Toggle" then
+        aimBindMode = combat.aimBindMode
+    end
+    waitingForAimBind = false
+    if aimBind and aimBindMode == "Hold" then
+        setAimEnabledFromBind(false, false)
+    end
+    refreshAimBindUI()
 
     if type(combat.aimGroups) == "table" then
         for name, toggle in pairs(groupButtons) do
@@ -1404,10 +1526,55 @@ bind(UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         dragging = false
     end
+    if aimBindMode == "Hold" and inputMatchesAimBind(input) then
+        setAimEnabledFromBind(false, false)
+    end
+end))
+
+bind(UserInputService.WindowFocusReleased:Connect(function()
+    if aimBindMode == "Hold" then
+        setAimEnabledFromBind(false, false)
+    end
 end))
 
 bind(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if waitingForAimBind then
+        if input.KeyCode == Enum.KeyCode.Escape then
+            waitingForAimBind = false
+            refreshAimBindUI()
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Delete or input.KeyCode == Enum.KeyCode.Backspace then
+            aimBind = nil
+            waitingForAimBind = false
+            refreshAimBindUI()
+            if requestConfigSave then requestConfigSave() end
+            return
+        end
+
+        local selectedBind = inputToAimBind(input)
+        if selectedBind then
+            aimBind = selectedBind
+            waitingForAimBind = false
+            if aimBindMode == "Hold" then setAimEnabledFromBind(false, false) end
+            refreshAimBindUI()
+            if requestConfigSave then requestConfigSave() end
+        end
+        return
+    end
+
     if gameProcessed then return end
+
+    if inputMatchesAimBind(input) then
+        if aimBindMode == "Hold" then
+            setAimEnabledFromBind(true, false)
+        else
+            setAimEnabledFromBind(not cameraAssistEnabled, true)
+        end
+        return
+    end
+
     if input.KeyCode == Enum.KeyCode.RightShift then
         window.Visible = not window.Visible
     end
