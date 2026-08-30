@@ -910,6 +910,7 @@ local fovRadius = 140
 local smoothValue = 4
 local wallCheckEnabled = true
 local smoothedAimDirection = nil
+local lastRawCameraRotation = nil
 local aimGroups = {
     Head = true,
     Neck = false,
@@ -920,7 +921,10 @@ local aimGroups = {
 
 local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
     cameraAssistEnabled = value
-    if not value then smoothedAimDirection = nil end
+    if not value then
+        smoothedAimDirection = nil
+        lastRawCameraRotation = nil
+    end
 end)
 
 local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600, 5, function(v) fovRadius = v end)
@@ -1130,18 +1134,37 @@ local function updateCombat(deltaTime)
 
     if not cameraAssistEnabled then
         smoothedAimDirection = nil
+        lastRawCameraRotation = nil
         return
     end
 
+    -- CameraScript calculates its own raw camera angle before this callback.
+    -- Carry the raw per-frame rotation delta over to our held aim direction so
+    -- losing a target does not snap back, while mouse movement still works.
+    local rawCameraCFrame = Camera.CFrame
+    local cameraPosition = rawCameraCFrame.Position
+    local rawCameraRotation = rawCameraCFrame - cameraPosition
+    if smoothedAimDirection and lastRawCameraRotation then
+        local rawDelta = lastRawCameraRotation:ToObjectSpace(rawCameraRotation)
+        local heldRotation = CFrame.lookAt(Vector3.zero, smoothedAimDirection)
+        local adjustedDirection = (heldRotation * rawDelta).LookVector
+        if adjustedDirection.Magnitude > 0.001 then
+            smoothedAimDirection = adjustedDirection.Unit
+            Camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + smoothedAimDirection)
+        end
+    end
+    lastRawCameraRotation = rawCameraRotation
+
     local targetPosition = getBestAimPoint()
     if not targetPosition then
-        smoothedAimDirection = nil
         combatStatus.Text = "No selected target inside FOV"
+        if smoothedAimDirection then
+            Camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + smoothedAimDirection)
+        end
         return
     end
 
     combatStatus.Text = "Tracking closest selected zone inside FOV"
-    local cameraPosition = Camera.CFrame.Position
     local desiredDirection = targetPosition - cameraPosition
     if desiredDirection.Magnitude <= 0.001 then return end
     desiredDirection = desiredDirection.Unit
@@ -1165,7 +1188,7 @@ local function updateCombat(deltaTime)
 end
 
 -- OTHER / CONFIG
-pageTitle(OtherPage, "Other", "Config auto-load/save when executor file API is available")
+pageTitle(OtherPage, "Other", "Settings are loaded and saved automatically")
 
 local CONFIG_FOLDER = "BezNigativa"
 local CONFIG_FILE = CONFIG_FOLDER .. "/config.json"
@@ -1288,37 +1311,21 @@ requestConfigSave = function()
     end)
 end
 
-local saveButton = Instance.new("TextButton")
-saveButton.Position = UDim2.fromOffset(18, 78)
-saveButton.Size = UDim2.fromOffset(190, 36)
-saveButton.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
-saveButton.BorderSizePixel = 0
-saveButton.Font = Enum.Font.Code
-saveButton.Text = "Save Config"
-saveButton.TextColor3 = Color3.fromRGB(230, 230, 230)
-saveButton.TextSize = 13
-saveButton.Parent = OtherPage
-
-local loadButton = saveButton:Clone()
-loadButton.Position = UDim2.fromOffset(222, 78)
-loadButton.Text = "Load Config"
-loadButton.Parent = OtherPage
-
-local unloadButton = saveButton:Clone()
-unloadButton.Position = UDim2.fromOffset(18, 210)
+local unloadButton = Instance.new("TextButton")
+unloadButton.Position = UDim2.fromOffset(18, 78)
 unloadButton.Size = UDim2.fromOffset(396, 36)
 unloadButton.BackgroundColor3 = Color3.fromRGB(92, 45, 45)
+unloadButton.BorderSizePixel = 0
+unloadButton.Font = Enum.Font.Code
 unloadButton.Text = "Unload Script"
+unloadButton.TextColor3 = Color3.fromRGB(230, 230, 230)
+unloadButton.TextSize = 13
 unloadButton.Parent = OtherPage
 
-for _, button in ipairs({saveButton, loadButton, unloadButton}) do
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = button
-end
+local unloadCorner = Instance.new("UICorner")
+unloadCorner.CornerRadius = UDim.new(0, 4)
+unloadCorner.Parent = unloadButton
 
-bind(saveButton.MouseButton1Click:Connect(function() saveConfig(false) end))
-bind(loadButton.MouseButton1Click:Connect(function() loadConfig(false) end))
 bind(unloadButton.MouseButton1Click:Connect(function()
     -- Saving is synchronous for executor file APIs, so cleanup can safely run
     -- immediately afterward without losing the current UI state.
