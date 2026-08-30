@@ -14,25 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Execute patch script
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          source = Path('.github/workflows/upgrade-controls-config.yml').read_text(encoding='utf-8')
-          start = source.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
-          end = source.index("\n          PY", start)
-          block = source[start:end]
-
-          lines = []
-          for line in block.splitlines():
-              if line.startswith('          '):
-                  line = line[10:]
-              lines.append(line)
-
-          code = '\n'.join(lines)
-          exec(compile(code, 'upgrade_controls_config.py', 'exec'), {'__name__': '__main__'})
-          PY
+        run: python tools/upgrade_controls_config.py
 
       - name: Commit result
         shell: bash
