@@ -1,12 +1,13 @@
 -- BezNigativa | categorized Roblox ClickGUI
 -- RightShift toggles the menu.
 -- Visual ESP uses Drawing API when available.
--- All features work everywhere.
+-- Combat and Movement are limited to Studio or an experience owned by LocalPlayer.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -15,6 +16,9 @@ if not LocalPlayer then
     warn("[BezNigativa] LocalPlayer not found")
     return
 end
+
+local safeEnvironment = RunService:IsStudio()
+    or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
 
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
@@ -225,6 +229,8 @@ local function pageTitle(parent, text, subtext)
     sub.Parent = parent
 end
 
+local requestConfigSave = nil
+
 local function createToggle(parent, x, y, width, labelText, initial, callback)
     local state = initial == true
     local button = Instance.new("TextButton")
@@ -250,11 +256,14 @@ local function createToggle(parent, x, y, width, labelText, initial, callback)
     refresh()
 
     bind(button.MouseButton1Click:Connect(function()
-        state = not state
-        if callback then
-            callback(state)
+        local requested = not state
+        local accepted = callback and callback(requested)
+        if accepted == false then
+            return
         end
+        state = requested
         refresh()
+        if requestConfigSave then requestConfigSave() end
     end))
 
     return {
@@ -269,69 +278,116 @@ end
 
 local function createStepper(parent, y, labelText, initial, minimum, maximum, step, onChanged)
     local value = initial
+    local dragging = false
 
     local label = Instance.new("TextLabel")
     label.BackgroundTransparency = 1
     label.Position = UDim2.fromOffset(18, y)
-    label.Size = UDim2.fromOffset(210, 32)
+    label.Size = UDim2.fromOffset(112, 32)
     label.Font = Enum.Font.Code
+    label.Text = labelText
     label.TextColor3 = Color3.fromRGB(215, 215, 215)
     label.TextSize = 13
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = parent
 
-    local minus = Instance.new("TextButton")
-    minus.Position = UDim2.fromOffset(260, y)
-    minus.Size = UDim2.fromOffset(34, 32)
-    minus.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
-    minus.BorderSizePixel = 0
-    minus.Font = Enum.Font.Code
-    minus.Text = "-"
-    minus.TextColor3 = Color3.fromRGB(230, 230, 230)
-    minus.TextSize = 16
-    minus.Parent = parent
+    local bar = Instance.new("Frame")
+    bar.Position = UDim2.fromOffset(140, y + 11)
+    bar.Size = UDim2.fromOffset(190, 10)
+    bar.BackgroundColor3 = Color3.fromRGB(42, 42, 42)
+    bar.BorderSizePixel = 0
+    bar.Active = true
+    bar.Parent = parent
 
-    local plus = minus:Clone()
-    plus.Position = UDim2.fromOffset(370, y)
-    plus.Text = "+"
-    plus.Parent = parent
+    local barCorner = Instance.new("UICorner")
+    barCorner.CornerRadius = UDim.new(1, 0)
+    barCorner.Parent = bar
 
-    local valueLabel = Instance.new("TextLabel")
-    valueLabel.Position = UDim2.fromOffset(302, y)
-    valueLabel.Size = UDim2.fromOffset(60, 32)
-    valueLabel.BackgroundColor3 = Color3.fromRGB(34, 34, 34)
-    valueLabel.BorderSizePixel = 0
-    valueLabel.Font = Enum.Font.Code
-    valueLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
-    valueLabel.TextSize = 13
-    valueLabel.Parent = parent
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.fromScale(0, 1)
+    fill.BackgroundColor3 = Color3.fromRGB(70, 115, 78)
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
 
-    for _, control in ipairs({minus, plus, valueLabel}) do
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 4)
-        c.Parent = control
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(1, 0)
+    fillCorner.Parent = fill
+
+    local valueBox = Instance.new("TextBox")
+    valueBox.Position = UDim2.fromOffset(342, y)
+    valueBox.Size = UDim2.fromOffset(72, 32)
+    valueBox.BackgroundColor3 = Color3.fromRGB(34, 34, 34)
+    valueBox.BorderSizePixel = 0
+    valueBox.ClearTextOnFocus = false
+    valueBox.Font = Enum.Font.Code
+    valueBox.TextColor3 = Color3.fromRGB(230, 230, 230)
+    valueBox.TextSize = 13
+    valueBox.Parent = parent
+
+    local boxCorner = Instance.new("UICorner")
+    boxCorner.CornerRadius = UDim.new(0, 4)
+    boxCorner.Parent = valueBox
+
+    local function cleanNumber(n)
+        if math.abs(n - math.round(n)) < 0.0001 then
+            return tostring(math.round(n))
+        end
+        return string.format("%.2f", n):gsub("0+$", ""):gsub("%.$", "")
     end
 
     local function refresh()
-        label.Text = labelText
-        valueLabel.Text = tostring(value)
+        local ratio = maximum == minimum and 0 or ((value - minimum) / (maximum - minimum))
+        fill.Size = UDim2.new(math.clamp(ratio, 0, 1), 0, 1, 0)
+        valueBox.Text = cleanNumber(value)
     end
 
-    local function setValue(newValue)
-        value = math.clamp(newValue, minimum, maximum)
+    local function setValue(newValue, snap)
+        newValue = tonumber(newValue)
+        if not newValue then
+            refresh()
+            return
+        end
+        newValue = math.clamp(newValue, minimum, maximum)
+        if snap and step and step > 0 then
+            newValue = minimum + math.round((newValue - minimum) / step) * step
+            newValue = math.clamp(newValue, minimum, maximum)
+        end
+        value = newValue
         refresh()
         if onChanged then onChanged(value) end
+        if requestConfigSave then requestConfigSave() end
     end
 
-    bind(minus.MouseButton1Click:Connect(function()
-        setValue(value - step)
+    local function setFromMouseX(x)
+        local ratio = math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
+        setValue(minimum + (maximum - minimum) * ratio, true)
+    end
+
+    bind(bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            setFromMouseX(input.Position.X)
+        end
     end))
-    bind(plus.MouseButton1Click:Connect(function()
-        setValue(value + step)
+
+    bind(UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            setFromMouseX(input.Position.X)
+        end
+    end))
+
+    bind(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end))
+
+    bind(valueBox.FocusLost:Connect(function()
+        setValue(valueBox.Text, false)
     end))
 
     refresh()
-    return function() return value end, setValue
+    return function() return value end, function(v) setValue(v, false) end
 end
 
 local drawingSupported = false
@@ -511,7 +567,7 @@ bind(Players.PlayerAdded:Connect(function(player) task.defer(createPlayerDrawing
 bind(Players.PlayerRemoving:Connect(removePlayerDrawings))
 
 -- MOVEMENT
-pageTitle(MovementPage, "Movement", "Works everywhere")
+pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled in this test environment" or "Locked: Studio / your own place only")
 
 local speedEnabled = false
 local jumpEnabled = false
@@ -616,18 +672,20 @@ bind(LocalPlayer.CharacterAdded:Connect(function()
     restoreNoclip()
     task.wait(0.2)
     captureDefaults()
-    if flyEnabled then
+    if flyEnabled and safeEnvironment then
         setFlyState(true)
     end
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
+    if value and not safeEnvironment then return false end
     speedEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then humanoid.WalkSpeed = defaults.WalkSpeed end
 end)
 
 local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
+    if value and not safeEnvironment then return false end
     jumpEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then
@@ -636,6 +694,7 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
 end)
 
 local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
+    if value and not safeEnvironment then return false end
     noclipEnabled = value
     if not value then
         restoreNoclip()
@@ -643,13 +702,14 @@ local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, f
 end)
 
 local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
+    if value and not safeEnvironment then return false end
     flyEnabled = value
     setFlyState(value)
 end)
 
-local getSpeed = createStepper(MovementPage, 174, "Speed value", speedValue, 16, 100, 4, function(v) speedValue = v end)
-local getJump = createStepper(MovementPage, 216, "Jump value", jumpValue, 30, 150, 5, function(v) jumpValue = v end)
-local getFlySpeed = createStepper(MovementPage, 258, "Fly speed", flySpeed, 10, 200, 5, function(v) flySpeed = v end)
+local getSpeed, setSpeed = createStepper(MovementPage, 174, "Speed", speedValue, 0, 200, 1, function(v) speedValue = v end)
+local getJump, setJump = createStepper(MovementPage, 216, "Jump", jumpValue, 0, 250, 1, function(v) jumpValue = v end)
+local getFlySpeed, setFlySpeed = createStepper(MovementPage, 258, "Fly speed", flySpeed, 0, 300, 1, function(v) flySpeed = v end)
 
 local flyHint = Instance.new("TextLabel")
 flyHint.BackgroundTransparency = 1
@@ -665,7 +725,7 @@ flyHint.TextYAlignment = Enum.TextYAlignment.Top
 flyHint.Parent = MovementPage
 
 local function updateNoclip()
-    if not noclipEnabled then return end
+    if not noclipEnabled or not safeEnvironment then return end
     local character = LocalPlayer.Character
     if not character then return end
 
@@ -680,7 +740,7 @@ local function updateNoclip()
 end
 
 local function updateFly()
-    if not flyEnabled then return end
+    if not flyEnabled or not safeEnvironment then return end
 
     local humanoid = getHumanoid()
     local root = getRoot()
@@ -725,6 +785,7 @@ local function updateFly()
 end
 
 local function updateMovement()
+    if not safeEnvironment then return end
     local humanoid = getHumanoid()
     if humanoid then
         if speedEnabled then humanoid.WalkSpeed = speedValue end
@@ -741,11 +802,12 @@ local function updateMovement()
 end
 
 -- COMBAT / CAMERA ASSIST
-pageTitle(CombatPage, "Combat", "Works everywhere | first person")
+pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: Studio / your own place only")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
-local smoothness = 8
+local aimSpeed = 35
+local wallCheckEnabled = true
 local aimGroups = {
     Head = true,
     Neck = false,
@@ -755,11 +817,17 @@ local aimGroups = {
 }
 
 local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
+    if value and not safeEnvironment then return false end
     cameraAssistEnabled = value
 end)
 
-local getFov = createStepper(CombatPage, 128, "FOV radius", fovRadius, 40, 500, 10, function(v) fovRadius = v end)
-local getSmooth = createStepper(CombatPage, 172, "Smoothness", smoothness, 1, 25, 1, function(v) smoothness = v end)
+local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600, 5, function(v) fovRadius = v end)
+local getAimSpeed, setAimSpeed = createStepper(CombatPage, 172, "Aim speed", aimSpeed, 1, 100, 1, function(v) aimSpeed = v end)
+
+local wallCheckToggle = createToggle(CombatPage, 222, 78, 190, "Wall Check", true, function(value)
+    if value and not safeEnvironment then return false end
+    wallCheckEnabled = value
+end)
 
 local groupsLabel = Instance.new("TextLabel")
 groupsLabel.BackgroundTransparency = 1
@@ -873,6 +941,21 @@ local function candidatePositions(character)
     return result
 end
 
+local function hasLineOfSight(targetCharacter, worldPosition)
+    if not wallCheckEnabled or not Camera then return true end
+
+    local direction = worldPosition - Camera.CFrame.Position
+    if direction.Magnitude <= 0.01 then return true end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
+    params.IgnoreWater = true
+
+    local hit = workspace:Raycast(Camera.CFrame.Position, direction, params)
+    return hit == nil or (hit.Instance and hit.Instance:IsDescendantOf(targetCharacter))
+end
+
 local function getBestAimPoint()
     if not Camera then return nil end
 
@@ -889,7 +972,7 @@ local function getBestAimPoint()
             if character and humanoid and humanoid.Health > 0 then
                 for _, worldPosition in ipairs(candidatePositions(character)) do
                     local screenPosition, visible = Camera:WorldToViewportPoint(worldPosition)
-                    if visible and screenPosition.Z > 0 then
+                    if visible and screenPosition.Z > 0 and hasLineOfSight(character, worldPosition) then
                         local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - center).Magnitude
                         if distance <= bestDistance then
                             bestDistance = distance
@@ -904,17 +987,17 @@ local function getBestAimPoint()
     return bestPosition
 end
 
-local function updateCombat()
+local function updateCombat(deltaTime)
     Camera = workspace.CurrentCamera or Camera
     if not Camera then return end
 
     if fovCircle then
         fovCircle.Position = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
         fovCircle.Radius = fovRadius
-        fovCircle.Visible = cameraAssistEnabled
+        fovCircle.Visible = cameraAssistEnabled and safeEnvironment
     end
 
-    if not cameraAssistEnabled then return end
+    if not cameraAssistEnabled or not safeEnvironment then return end
 
     if not isFirstPerson() then
         combatStatus.Text = "Enter first person to use AimBot"
@@ -929,12 +1012,162 @@ local function updateCombat()
 
     combatStatus.Text = "Tracking closest selected zone inside FOV"
     local desired = CFrame.lookAt(Camera.CFrame.Position, targetPosition)
-    local alpha = math.clamp(1 / math.max(smoothness, 1), 0.02, 1)
+    local dt = math.clamp(deltaTime or (1 / 60), 1 / 240, 1 / 15)
+    local responseRate = 2 + (aimSpeed * 0.45)
+    local alpha = 1 - math.exp(-responseRate * dt)
     Camera.CFrame = Camera.CFrame:Lerp(desired, alpha)
 end
 
--- OTHER
-pageTitle(OtherPage, "Other", "No modules yet")
+-- OTHER / CONFIG
+pageTitle(OtherPage, "Other", "Config auto-load/save when executor file API is available")
+
+local CONFIG_FOLDER = "BezNigativa"
+local CONFIG_FILE = CONFIG_FOLDER .. "/config.json"
+local configLoading = false
+local configSaveToken = 0
+local fileApiAvailable = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+
+local configStatus = Instance.new("TextLabel")
+configStatus.BackgroundTransparency = 1
+configStatus.Position = UDim2.fromOffset(18, 132)
+configStatus.Size = UDim2.new(1, -36, 0, 60)
+configStatus.Font = Enum.Font.Code
+configStatus.Text = fileApiAvailable and "Config ready" or "Config unavailable: executor file API missing"
+configStatus.TextColor3 = Color3.fromRGB(145, 145, 145)
+configStatus.TextSize = 12
+configStatus.TextWrapped = true
+configStatus.TextXAlignment = Enum.TextXAlignment.Left
+configStatus.TextYAlignment = Enum.TextYAlignment.Top
+configStatus.Parent = OtherPage
+
+local function buildConfig()
+    return {
+        version = 1,
+        visual = {esp = espEnabled, healthBar = healthBarEnabled},
+        movement = {
+            speedEnabled = speedEnabled,
+            jumpEnabled = jumpEnabled,
+            noclipEnabled = noclipEnabled,
+            flyEnabled = flyEnabled,
+            speed = speedValue,
+            jump = jumpValue,
+            flySpeed = flySpeed,
+        },
+        combat = {
+            enabled = cameraAssistEnabled,
+            wallCheck = wallCheckEnabled,
+            fov = fovRadius,
+            aimSpeed = aimSpeed,
+            aimGroups = aimGroups,
+        },
+    }
+end
+
+local function saveConfig(silent)
+    if configLoading or not fileApiAvailable then return false end
+    local ok, err = pcall(function()
+        if type(makefolder) == "function" then pcall(makefolder, CONFIG_FOLDER) end
+        writefile(CONFIG_FILE, HttpService:JSONEncode(buildConfig()))
+    end)
+    if not silent then
+        configStatus.Text = ok and "Config saved" or ("Save failed: " .. tostring(err))
+    end
+    return ok
+end
+
+local function applyConfig(data)
+    if type(data) ~= "table" then return end
+    configLoading = true
+
+    local visual = type(data.visual) == "table" and data.visual or {}
+    local movement = type(data.movement) == "table" and data.movement or {}
+    local combat = type(data.combat) == "table" and data.combat or {}
+
+    if type(visual.esp) == "boolean" then espEnabled = visual.esp; espToggle.Set(espEnabled) end
+    if type(visual.healthBar) == "boolean" then healthBarEnabled = visual.healthBar; hpToggle.Set(healthBarEnabled) end
+
+    if type(movement.speed) == "number" then setSpeed(movement.speed) end
+    if type(movement.jump) == "number" then setJump(movement.jump) end
+    if type(movement.flySpeed) == "number" then setFlySpeed(movement.flySpeed) end
+
+    if safeEnvironment then
+        if type(movement.speedEnabled) == "boolean" then speedEnabled = movement.speedEnabled; speedToggle.Set(speedEnabled) end
+        if type(movement.jumpEnabled) == "boolean" then jumpEnabled = movement.jumpEnabled; jumpToggle.Set(jumpEnabled) end
+        if type(movement.noclipEnabled) == "boolean" then noclipEnabled = movement.noclipEnabled; noclipToggle.Set(noclipEnabled) end
+        if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
+    end
+
+    if type(combat.fov) == "number" then setFov(combat.fov) end
+    if type(combat.aimSpeed) == "number" then setAimSpeed(combat.aimSpeed) end
+    if type(combat.wallCheck) == "boolean" then wallCheckEnabled = combat.wallCheck; wallCheckToggle.Set(wallCheckEnabled) end
+    if safeEnvironment and type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
+
+    if type(combat.aimGroups) == "table" then
+        for name, toggle in pairs(groupButtons) do
+            local value = combat.aimGroups[name]
+            if type(value) == "boolean" then
+                aimGroups[name] = value
+                toggle.Set(value)
+            end
+        end
+    end
+
+    if not noclipEnabled then restoreNoclip() end
+    configLoading = false
+end
+
+local function loadConfig(silent)
+    if not fileApiAvailable then return false end
+    local ok, err = pcall(function()
+        if not isfile(CONFIG_FILE) then return end
+        applyConfig(HttpService:JSONDecode(readfile(CONFIG_FILE)))
+    end)
+    if not silent then
+        configStatus.Text = ok and "Config loaded" or ("Load failed: " .. tostring(err))
+    end
+    return ok
+end
+
+requestConfigSave = function()
+    if configLoading or not fileApiAvailable then return end
+    configSaveToken += 1
+    local token = configSaveToken
+    task.delay(0.35, function()
+        if token == configSaveToken then saveConfig(true) end
+    end)
+end
+
+local saveButton = Instance.new("TextButton")
+saveButton.Position = UDim2.fromOffset(18, 78)
+saveButton.Size = UDim2.fromOffset(190, 36)
+saveButton.BackgroundColor3 = Color3.fromRGB(43, 43, 43)
+saveButton.BorderSizePixel = 0
+saveButton.Font = Enum.Font.Code
+saveButton.Text = "Save Config"
+saveButton.TextColor3 = Color3.fromRGB(230, 230, 230)
+saveButton.TextSize = 13
+saveButton.Parent = OtherPage
+
+local loadButton = saveButton:Clone()
+loadButton.Position = UDim2.fromOffset(222, 78)
+loadButton.Text = "Load Config"
+loadButton.Parent = OtherPage
+
+for _, button in ipairs({saveButton, loadButton}) do
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 4)
+    corner.Parent = button
+end
+
+bind(saveButton.MouseButton1Click:Connect(function() saveConfig(false) end))
+bind(loadButton.MouseButton1Click:Connect(function() loadConfig(false) end))
+
+task.defer(function()
+    loadConfig(true)
+    if fileApiAvailable and isfile(CONFIG_FILE) then
+        configStatus.Text = "Config auto-loaded"
+    end
+end)
 
 -- MAIN UPDATE LOOP
 bind(RunService.RenderStepped:Connect(function()
@@ -945,9 +1178,9 @@ end))
 
 -- Apply AimBot after Roblox's normal camera update so CameraScript does not overwrite it.
 local AIMBOT_RENDER_NAME = "BezNigativaAimBotCamera"
-RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
     Camera = workspace.CurrentCamera or Camera
-    updateCombat()
+    updateCombat(deltaTime)
 end)
 
 bind(RunService.Heartbeat:Connect(updateMovement))
