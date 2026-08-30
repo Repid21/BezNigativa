@@ -178,6 +178,7 @@ end
 local CombatPage = createPage("Combat")
 local MovementPage = createPage("Movement")
 local VisualPage = createPage("Visual")
+local FriendPage = createPage("Friend")
 local OtherPage = createPage("Other")
 
 local function setPage(name)
@@ -217,7 +218,8 @@ end
 createTab("Combat", 14)
 createTab("Movement", 58)
 createTab("Visual", 102)
-createTab("Other", 146)
+createTab("Friend", 146)
+createTab("Other", 190)
 
 local function pageTitle(parent, text, subtext)
     local label = Instance.new("TextLabel")
@@ -404,6 +406,185 @@ local function createStepper(parent, y, labelText, initial, minimum, maximum, st
     return function() return value end, function(v) setValue(v, false) end
 end
 
+-- FRIENDS
+pageTitle(FriendPage, "Friends", "AimBot ignores friends | ESP marks them green")
+
+local friends = {}
+
+local function normalizeFriendName(rawName)
+    if type(rawName) ~= "string" then return nil, nil end
+    local displayName = rawName:match("^%s*(.-)%s*$") or ""
+    if displayName:sub(1, 1) == "@" then
+        displayName = displayName:sub(2):match("^%s*(.-)%s*$") or ""
+    end
+    if displayName == "" then return nil, nil end
+    return string.lower(displayName), displayName
+end
+
+local function isFriend(player)
+    if not player then return false end
+    local userKey = normalizeFriendName(player.Name)
+    local displayKey = normalizeFriendName(player.DisplayName)
+    return (userKey and friends[userKey] ~= nil) or (displayKey and friends[displayKey] ~= nil)
+end
+
+local friendInput = Instance.new("TextBox")
+friendInput.Position = UDim2.fromOffset(18, 78)
+friendInput.Size = UDim2.fromOffset(282, 36)
+friendInput.BackgroundColor3 = Color3.fromRGB(34, 34, 34)
+friendInput.BorderSizePixel = 0
+friendInput.ClearTextOnFocus = false
+friendInput.PlaceholderText = "@username or username"
+friendInput.Text = ""
+friendInput.Font = Enum.Font.Code
+friendInput.TextColor3 = Color3.fromRGB(230, 230, 230)
+friendInput.PlaceholderColor3 = Color3.fromRGB(125, 125, 125)
+friendInput.TextSize = 13
+friendInput.Parent = FriendPage
+
+local friendInputCorner = Instance.new("UICorner")
+friendInputCorner.CornerRadius = UDim.new(0, 4)
+friendInputCorner.Parent = friendInput
+
+local addFriendButton = Instance.new("TextButton")
+addFriendButton.Position = UDim2.fromOffset(312, 78)
+addFriendButton.Size = UDim2.fromOffset(100, 36)
+addFriendButton.BackgroundColor3 = Color3.fromRGB(55, 95, 65)
+addFriendButton.BorderSizePixel = 0
+addFriendButton.AutoButtonColor = false
+addFriendButton.Font = Enum.Font.Code
+addFriendButton.Text = "Add"
+addFriendButton.TextColor3 = Color3.fromRGB(235, 235, 235)
+addFriendButton.TextSize = 13
+addFriendButton.Parent = FriendPage
+
+local addFriendCorner = Instance.new("UICorner")
+addFriendCorner.CornerRadius = UDim.new(0, 4)
+addFriendCorner.Parent = addFriendButton
+
+local friendStatus = Instance.new("TextLabel")
+friendStatus.BackgroundTransparency = 1
+friendStatus.Position = UDim2.fromOffset(18, 120)
+friendStatus.Size = UDim2.new(1, -36, 0, 20)
+friendStatus.Font = Enum.Font.Code
+friendStatus.Text = "Add a Roblox username or display name"
+friendStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
+friendStatus.TextSize = 11
+friendStatus.TextXAlignment = Enum.TextXAlignment.Left
+friendStatus.Parent = FriendPage
+
+local friendList = Instance.new("ScrollingFrame")
+friendList.Position = UDim2.fromOffset(18, 148)
+friendList.Size = UDim2.fromOffset(394, 224)
+friendList.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+friendList.BorderSizePixel = 0
+friendList.ScrollBarThickness = 4
+friendList.ScrollBarImageColor3 = Color3.fromRGB(85, 115, 90)
+friendList.CanvasSize = UDim2.fromOffset(0, 0)
+friendList.Parent = FriendPage
+
+local friendListCorner = Instance.new("UICorner")
+friendListCorner.CornerRadius = UDim.new(0, 4)
+friendListCorner.Parent = friendList
+
+local function sortedFriendKeys()
+    local keys = {}
+    for key in pairs(friends) do table.insert(keys, key) end
+    table.sort(keys, function(a, b)
+        return string.lower(friends[a]) < string.lower(friends[b])
+    end)
+    return keys
+end
+
+local function friendConfigList()
+    local result = {}
+    for _, key in ipairs(sortedFriendKeys()) do
+        table.insert(result, friends[key])
+    end
+    return result
+end
+
+local refreshFriendList
+refreshFriendList = function()
+    for _, child in ipairs(friendList:GetChildren()) do
+        if child.Name == "FriendRow" then child:Destroy() end
+    end
+
+    local keys = sortedFriendKeys()
+    for index, key in ipairs(keys) do
+        local friendKey = key
+        local row = Instance.new("Frame")
+        row.Name = "FriendRow"
+        row.Position = UDim2.fromOffset(6, 6 + ((index - 1) * 38))
+        row.Size = UDim2.new(1, -12, 0, 32)
+        row.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+        row.BorderSizePixel = 0
+        row.Parent = friendList
+
+        local rowCorner = Instance.new("UICorner")
+        rowCorner.CornerRadius = UDim.new(0, 4)
+        rowCorner.Parent = row
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Position = UDim2.fromOffset(10, 0)
+        nameLabel.Size = UDim2.new(1, -100, 1, 0)
+        nameLabel.Font = Enum.Font.Code
+        nameLabel.Text = "@" .. friends[friendKey]
+        nameLabel.TextColor3 = Color3.fromRGB(90, 225, 115)
+        nameLabel.TextSize = 12
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.Parent = row
+
+        local removeButton = Instance.new("TextButton")
+        removeButton.Position = UDim2.new(1, -82, 0, 4)
+        removeButton.Size = UDim2.fromOffset(74, 24)
+        removeButton.BackgroundColor3 = Color3.fromRGB(82, 43, 43)
+        removeButton.BorderSizePixel = 0
+        removeButton.Font = Enum.Font.Code
+        removeButton.Text = "Remove"
+        removeButton.TextColor3 = Color3.fromRGB(235, 220, 220)
+        removeButton.TextSize = 11
+        removeButton.Parent = row
+
+        local removeCorner = Instance.new("UICorner")
+        removeCorner.CornerRadius = UDim.new(0, 3)
+        removeCorner.Parent = removeButton
+
+        removeButton.MouseButton1Click:Connect(function()
+            friends[friendKey] = nil
+            friendStatus.Text = "Friend removed"
+            refreshFriendList()
+            if requestConfigSave then requestConfigSave() end
+        end)
+    end
+
+    friendList.CanvasSize = UDim2.fromOffset(0, 12 + (#keys * 38))
+end
+
+local function addFriend(rawName)
+    local key, displayName = normalizeFriendName(rawName)
+    if not key then
+        friendStatus.Text = "Enter a valid username"
+        return false
+    end
+
+    friends[key] = displayName
+    friendInput.Text = ""
+    friendStatus.Text = "Added @" .. displayName
+    refreshFriendList()
+    if requestConfigSave then requestConfigSave() end
+    return true
+end
+
+bind(addFriendButton.MouseButton1Click:Connect(function()
+    addFriend(friendInput.Text)
+end))
+bind(friendInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then addFriend(friendInput.Text) end
+end))
+refreshFriendList()
+
 local drawingSupported = false
 local drawingOk, drawingResult = pcall(function()
     return Drawing ~= nil and type(Drawing.new) == "function"
@@ -544,6 +725,7 @@ local function updateESP()
             local bundle = playerDrawings[targetPlayer]
             local character = targetPlayer.Character
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            local friend = isFriend(targetPlayer)
 
             if not bundle or not espEnabled or not character or not humanoid or humanoid.Health <= 0 then
                 if bundle then
@@ -560,6 +742,7 @@ local function updateESP()
                 else
                     bundle.Box.Position = Vector2.new(x, y)
                     bundle.Box.Size = Vector2.new(width, height)
+                    bundle.Box.Color = friend and Color3.fromRGB(75, 230, 105) or Color3.fromRGB(235, 235, 235)
                     bundle.Box.Visible = true
 
                     if healthBarEnabled then
@@ -573,11 +756,15 @@ local function updateESP()
 
                         bundle.HpFill.Position = Vector2.new(barX, y + height - fillHeight)
                         bundle.HpFill.Size = Vector2.new(4, fillHeight)
-                        bundle.HpFill.Color = Color3.fromRGB(
-                            math.floor(255 * (1 - ratio)),
-                            math.floor(220 * ratio),
-                            55
-                        )
+                        if friend then
+                            bundle.HpFill.Color = Color3.fromRGB(75, 230, 105)
+                        else
+                            bundle.HpFill.Color = Color3.fromRGB(
+                                math.floor(255 * (1 - ratio)),
+                                math.floor(220 * ratio),
+                                55
+                            )
+                        end
                         bundle.HpFill.Visible = true
                     else
                         if bundle.HpBackground then bundle.HpBackground.Visible = false end
@@ -933,7 +1120,7 @@ local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, func
 end)
 
 local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600, 5, function(v) fovRadius = v end)
-local getSmooth, setSmooth = createStepper(CombatPage, 172, "Smooth", smoothValue, 1, 100, 1, function(v) smoothValue = v end)
+local getSmooth, setSmooth = createStepper(CombatPage, 172, "Smooth", smoothValue, 1, 20, 1, function(v) smoothValue = v end)
 
 local wallCheckToggle = createToggle(CombatPage, 222, 78, 190, "Wall Check", true, function(value)
     wallCheckEnabled = value
@@ -1179,7 +1366,7 @@ local function getBestAimPoint()
     local bestDistance = fovRadius
 
     for _, targetPlayer in ipairs(Players:GetPlayers()) do
-        if targetPlayer ~= LocalPlayer then
+        if targetPlayer ~= LocalPlayer and not isFriend(targetPlayer) then
             local character = targetPlayer.Character
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
@@ -1315,7 +1502,8 @@ configStatus.Parent = OtherPage
 
 local function buildConfig()
     return {
-        version = 3,
+        version = 4,
+        friends = friendConfigList(),
         visual = {esp = espEnabled, healthBar = healthBarEnabled},
         movement = {
             speedEnabled = speedEnabled,
@@ -1358,6 +1546,15 @@ local function applyConfig(data)
     local movement = type(data.movement) == "table" and data.movement or {}
     local combat = type(data.combat) == "table" and data.combat or {}
 
+    table.clear(friends)
+    if type(data.friends) == "table" then
+        for _, rawName in ipairs(data.friends) do
+            local key, displayName = normalizeFriendName(rawName)
+            if key then friends[key] = displayName end
+        end
+    end
+    refreshFriendList()
+
     if type(visual.esp) == "boolean" then espEnabled = visual.esp; espToggle.Set(espEnabled) end
     if type(visual.healthBar) == "boolean" then healthBarEnabled = visual.healthBar; hpToggle.Set(healthBarEnabled) end
 
@@ -1377,7 +1574,7 @@ local function applyConfig(data)
         -- Convert version 1's inverted Aim Speed into the new Smooth scale.
         local oldSpeed = math.clamp(combat.aimSpeed, 1, 100)
         local oldAlphaAt60Fps = 1 - math.exp(-(2 + oldSpeed * 0.45) / 60)
-        setSmooth(math.clamp(math.round(1 / math.max(oldAlphaAt60Fps, 0.01)), 1, 100))
+        setSmooth(math.clamp(math.round(1 / math.max(oldAlphaAt60Fps, 0.01)), 1, 20))
     end
     if type(combat.wallCheck) == "boolean" then wallCheckEnabled = combat.wallCheck; wallCheckToggle.Set(wallCheckEnabled) end
     if type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
@@ -1624,4 +1821,4 @@ end
 
 env.BezNigativaCleanup = cleanup
 
-print("[BezNigativa] Loaded | Combat / Movement / Visual / Other")
+print("[BezNigativa] Loaded | Combat / Movement / Visual / Friend / Other")
