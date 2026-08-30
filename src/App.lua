@@ -36,6 +36,7 @@ function App.start(loadModule)
     }
     context.Touch = function() self.Config:Touch() end
     context.Unload = function() self:Destroy(true) end
+    context.GetGameProfile = function() return self.GameProfile end
 
     local function emptyFeature()
         return {
@@ -81,22 +82,27 @@ function App.start(loadModule)
     end
 
     self.Config:SetProvider(function()
+        local gameProfiles = {}
+        for name, value in pairs(self.SavedGameProfiles or {}) do gameProfiles[name] = value end
+        if self.GameProfileName then gameProfiles[self.GameProfileName] = self.GameProfile:GetConfig() end
         return {
-            version = 8,
+            version = 8.1,
             friends = self.Friends:GetConfig(),
             visuals = self.Visuals:GetConfig(),
             movement = self.Movement:GetConfig(),
             combat = self.Combat:GetConfig(),
-            gameProfile = self.GameProfile:GetConfig(),
+            gameProfiles = gameProfiles,
         }
     end)
     local saved = self.Config:Load()
     if type(saved) == "table" then
+        self.SavedGameProfiles = type(saved.gameProfiles) == "table" and saved.gameProfiles or {}
         self.Friends:ApplyConfig(saved.friends)
         self.Visuals:ApplyConfig(saved.visuals)
         self.Movement:ApplyConfig(saved.movement)
         self.Combat:ApplyConfig(saved.combat or saved.aimbot)
-        self.GameProfile:ApplyConfig(saved.gameProfile)
+        local profileConfig = self.GameProfileName and self.SavedGameProfiles[self.GameProfileName] or saved.gameProfile
+        self.GameProfile:ApplyConfig(profileConfig)
     end
 
     self.Window:ShowPage("Combat")
@@ -107,7 +113,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v8.0 modular loaded")
+    print("[BezNigativa] v8.1 modular loaded")
     return self
 end
 

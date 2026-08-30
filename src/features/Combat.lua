@@ -20,6 +20,7 @@ function Combat.new(ctx)
         Enabled = false,
         WallCheck = true,
         Fov = 180,
+        ShowFov = true,
         Smooth = 5,
         AimPart = "Head",
         Mode = "Hold",
@@ -72,6 +73,28 @@ function Combat.new(ctx)
     hint.TextXAlignment = Enum.TextXAlignment.Left
     hint.TextYAlignment = Enum.TextYAlignment.Top
     hint.Parent = module.Settings
+    self.FovCircleControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(10, 232), 190, "FOV Circle", true, function(value)
+        self.ShowFov = value; ctx.Touch()
+    end)
+
+    local fovCircle = Instance.new("Frame")
+    fovCircle.Name = "BezNigativaFovCircle"
+    fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+    fovCircle.BackgroundTransparency = 1
+    fovCircle.BorderSizePixel = 0
+    fovCircle.Active = false
+    fovCircle.Visible = false
+    fovCircle.ZIndex = 0
+    fovCircle.Parent = ctx.Window.Gui
+    local circleCorner = Instance.new("UICorner")
+    circleCorner.CornerRadius = UDim.new(1, 0)
+    circleCorner.Parent = fovCircle
+    local circleStroke = Instance.new("UIStroke")
+    circleStroke.Color = Color3.fromRGB(235, 235, 235)
+    circleStroke.Thickness = 1
+    circleStroke.Transparency = 0.2
+    circleStroke.Parent = fovCircle
+    self.FovCircle = fovCircle
 
     ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input, processed)
         if self.Capturing then
@@ -121,6 +144,8 @@ end
 
 function Combat:Candidate(player)
     if player == self.ctx.LocalPlayer or self.ctx.Friends:IsFriend(player) or not alive(player) then return nil end
+    local profile = self.ctx.GetGameProfile and self.ctx.GetGameProfile()
+    if profile and type(profile.IsAimTarget) == "function" and not profile:IsAimTarget(player) then return nil end
     local part = player.Character:FindFirstChild(self.AimPart) or player.Character:FindFirstChild("Head")
     if not part or not self:Visible(part) then return nil end
     local camera = workspace.CurrentCamera
@@ -149,6 +174,12 @@ function Combat:SelectTarget()
 end
 
 function Combat:Step()
+    local mouse = self.ctx.UserInputService:GetMouseLocation()
+    if self.FovCircle then
+        self.FovCircle.Visible = self.Enabled and self.ShowFov
+        self.FovCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+        self.FovCircle.Size = UDim2.fromOffset(self.Fov * 2, self.Fov * 2)
+    end
     if not self:IsActive() then self.Target = nil; return end
     local camera = workspace.CurrentCamera
     if not camera then return end
@@ -162,7 +193,7 @@ end
 
 function Combat:GetConfig()
     return {
-        enabled = self.Enabled, wallCheck = self.WallCheck, fov = self.Fov,
+        enabled = self.Enabled, wallCheck = self.WallCheck, fov = self.Fov, showFov = self.ShowFov,
         smooth = self.Smooth, aimPart = self.AimPart, mode = self.Mode, bind = self.Bind,
     }
 end
@@ -172,6 +203,7 @@ function Combat:ApplyConfig(data)
     self.Enabled = data.enabled == true
     self.WallCheck = data.wallCheck ~= false
     self.Fov = math.clamp(tonumber(data.fov) or self.Fov, 30, 600)
+    self.ShowFov = data.showFov ~= false
     self.Smooth = math.clamp(tonumber(data.smooth) or self.Smooth, 1, 20)
     self.AimPart = data.aimPart == "HumanoidRootPart" and "HumanoidRootPart" or "Head"
     self.Mode = data.mode == "Toggle" and "Toggle" or "Hold"
@@ -179,6 +211,7 @@ function Combat:ApplyConfig(data)
     self.EnabledControl.Set(self.Enabled)
     self.WallControl.Set(self.WallCheck)
     self.FovControl.Set(self.Fov)
+    self.FovCircleControl.Set(self.ShowFov)
     self.SmoothControl.Set(self.Smooth)
     self.PartControl.Text = "Part: " .. (self.AimPart == "Head" and "Head" or "Body")
     self.ModeControl.Text = "Mode: " .. self.Mode
