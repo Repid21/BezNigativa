@@ -8,6 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -101,7 +102,7 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "BezNigativaGUI"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
-gui:SetAttribute("Build", "5.0-modules")
+gui:SetAttribute("Build", "6.0-modules")
 gui.Parent = guiParent
 
 local window = Instance.new("Frame")
@@ -143,7 +144,7 @@ title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(13, 0)
 title.Size = UDim2.new(1, -26, 1, 0)
 title.Font = Enum.Font.Code
-title.Text = "BezNigativa v5.0"
+title.Text = "BezNigativa v6.0"
 title.TextColor3 = Color3.fromRGB(238, 238, 238)
 title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -699,11 +700,25 @@ local espEnabled = false
 local healthBarEnabled = false
 local nameTagsEnabled = false
 local nameTagTextSize = 14
+local nameTagShowDisplayName = true
+local nameTagShowUsername = true
+local nameTagShowDistance = true
 local chamsEnabled = false
 local chamsTransparency = 0.55
 local playerHighlights = {}
+local lightingEnabled = false
+local lightingRed = 255
+local lightingGreen = 255
+local lightingBlue = 255
+local lightingStrength = 0.5
+local lightingEffect = nil
 
-local espToggle = createToggle(VisualPage, 18, 78, 190, "ESP", false, function(value)
+local visualControls = {}
+do
+local visualModules = createModuleStack(VisualPage, 78)
+
+local espModule = visualModules.Add("ESP", 88)
+visualControls.espToggle = createToggle(espModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     espEnabled = value
     if not value then
         for _, bundle in pairs(playerDrawings) do
@@ -714,7 +729,8 @@ local espToggle = createToggle(VisualPage, 18, 78, 190, "ESP", false, function(v
     end
 end)
 
-local hpToggle = createToggle(VisualPage, 222, 78, 190, "Health Bar", false, function(value)
+local healthBarModule = visualModules.Add("Health Bar", 88)
+visualControls.hpToggle = createToggle(healthBarModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     healthBarEnabled = value
     if not value then
         for _, bundle in pairs(playerDrawings) do
@@ -724,22 +740,70 @@ local hpToggle = createToggle(VisualPage, 222, 78, 190, "Health Bar", false, fun
     end
 end)
 
-local visualModules = createModuleStack(VisualPage, 122)
-local nameTagsModule = visualModules.Add("NameTags", 132)
-local nameTagsToggle = createToggle(nameTagsModule.Settings, 8, 8, 190, "Enabled", false, function(value)
+local nameTagsModule = visualModules.Add("NameTags", 214)
+visualControls.nameTagsToggle = createToggle(nameTagsModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     nameTagsEnabled = value
 end)
 local getNameTagSize, setNameTagSize = createStepper(nameTagsModule.Settings, 50, "Text size", nameTagTextSize, 10, 24, 1, function(value)
     nameTagTextSize = value
 end)
+visualControls.setNameTagSize = setNameTagSize
+visualControls.nameTagDisplayToggle = createToggle(nameTagsModule.Settings, 8, 92, 190, "Display name", true, function(value)
+    nameTagShowDisplayName = value
+end)
+visualControls.nameTagUsernameToggle = createToggle(nameTagsModule.Settings, 212, 92, 190, "Username", true, function(value)
+    nameTagShowUsername = value
+end)
+visualControls.nameTagDistanceToggle = createToggle(nameTagsModule.Settings, 8, 134, 190, "Distance", true, function(value)
+    nameTagShowDistance = value
+end)
 
 local chamsModule = visualModules.Add("Chams", 132)
-local chamsToggle = createToggle(chamsModule.Settings, 8, 8, 190, "Enabled", false, function(value)
+visualControls.chamsToggle = createToggle(chamsModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     chamsEnabled = value
 end)
 local getChamsTransparency, setChamsTransparency = createStepper(chamsModule.Settings, 50, "Transparency", chamsTransparency, 0.1, 0.9, 0.05, function(value)
     chamsTransparency = value
 end)
+visualControls.setChamsTransparency = setChamsTransparency
+
+local lightingModule = visualModules.Add("Lighting", 260)
+visualControls.lightingToggle = createToggle(lightingModule.Settings, 8, 8, 190, "Enabled", false, function(value)
+    lightingEnabled = value
+end)
+local lightingPreview = Instance.new("TextLabel")
+lightingPreview.Position = UDim2.fromOffset(212, 8)
+lightingPreview.Size = UDim2.fromOffset(190, 34)
+lightingPreview.BackgroundColor3 = Color3.fromRGB(lightingRed, lightingGreen, lightingBlue)
+lightingPreview.BorderSizePixel = 0
+lightingPreview.Font = Enum.Font.Code
+lightingPreview.Text = "Selected color"
+lightingPreview.TextColor3 = Color3.fromRGB(25, 25, 25)
+lightingPreview.TextSize = 12
+lightingPreview.Parent = lightingModule.Settings
+
+local lightingPreviewCorner = Instance.new("UICorner")
+lightingPreviewCorner.CornerRadius = UDim.new(0, 4)
+lightingPreviewCorner.Parent = lightingPreview
+visualControls.lightingPreview = lightingPreview
+
+local getLightingRed, setLightingRed = createStepper(lightingModule.Settings, 50, "Red", lightingRed, 0, 255, 1, function(value)
+    lightingRed = value
+end)
+visualControls.setLightingRed = setLightingRed
+local getLightingGreen, setLightingGreen = createStepper(lightingModule.Settings, 92, "Green", lightingGreen, 0, 255, 1, function(value)
+    lightingGreen = value
+end)
+visualControls.setLightingGreen = setLightingGreen
+local getLightingBlue, setLightingBlue = createStepper(lightingModule.Settings, 134, "Blue", lightingBlue, 0, 255, 1, function(value)
+    lightingBlue = value
+end)
+visualControls.setLightingBlue = setLightingBlue
+local getLightingStrength, setLightingStrength = createStepper(lightingModule.Settings, 176, "Strength", lightingStrength, 0, 1, 0.05, function(value)
+    lightingStrength = value
+end)
+visualControls.setLightingStrength = setLightingStrength
+end
 
 local function createPlayerDrawings(targetPlayer)
     if destroyed or targetPlayer == LocalPlayer or playerDrawings[targetPlayer] or not drawingSupported then return end
@@ -904,16 +968,27 @@ local function updateESP()
             if bundle and bundle.NameTag then
                 local head = character and character:FindFirstChild("Head")
                 if nameTagsEnabled and humanoid and humanoid.Health > 0 and head and head:IsA("BasePart") then
-                    local screenPosition, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 1.15, 0))
-                    if onScreen and screenPosition.Z > 0 then
+                    local tagX, tagY, tagWidth = screenBounds(character)
+                    if tagX then
                         local localCharacter = LocalPlayer.Character
                         local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
                         local distance = localRoot and math.floor((localRoot.Position - head.Position).Magnitude + 0.5) or nil
-                        bundle.NameTag.Text = targetPlayer.DisplayName .. " (@" .. targetPlayer.Name .. ")" .. (distance and (" [" .. distance .. "m]") or "")
-                        bundle.NameTag.Position = Vector2.new(screenPosition.X, screenPosition.Y)
-                        bundle.NameTag.Size = nameTagTextSize
-                        bundle.NameTag.Color = friend and Color3.fromRGB(75, 230, 105) or Color3.fromRGB(245, 245, 245)
-                        bundle.NameTag.Visible = true
+                        local textParts = {}
+                        if nameTagShowDisplayName then table.insert(textParts, targetPlayer.DisplayName) end
+                        if nameTagShowUsername then table.insert(textParts, "@" .. targetPlayer.Name) end
+                        if nameTagShowDistance and distance then table.insert(textParts, tostring(distance) .. "m") end
+
+                        if #textParts > 0 then
+                            bundle.NameTag.Text = table.concat(textParts, " | ")
+                            -- Anchor to the top of the calculated ESP bounds,
+                            -- not the head center, so the tag stays clearly above the player.
+                            bundle.NameTag.Position = Vector2.new(tagX + (tagWidth * 0.5), tagY - nameTagTextSize - 6)
+                            bundle.NameTag.Size = nameTagTextSize
+                            bundle.NameTag.Color = friend and Color3.fromRGB(75, 230, 105) or Color3.fromRGB(245, 245, 245)
+                            bundle.NameTag.Visible = true
+                        else
+                            bundle.NameTag.Visible = false
+                        end
                     else
                         bundle.NameTag.Visible = false
                     end
@@ -977,6 +1052,37 @@ local function updateChams()
             end
         end
     end
+end
+
+local function cleanupLighting()
+    if lightingEffect then
+        pcall(function() lightingEffect:Destroy() end)
+        lightingEffect = nil
+    end
+end
+
+local function updateLighting()
+    local selectedColor = Color3.fromRGB(lightingRed, lightingGreen, lightingBlue)
+    visualControls.lightingPreview.BackgroundColor3 = selectedColor
+    local brightness = (lightingRed * 0.299 + lightingGreen * 0.587 + lightingBlue * 0.114)
+    visualControls.lightingPreview.TextColor3 = brightness > 145 and Color3.fromRGB(25, 25, 25) or Color3.fromRGB(240, 240, 240)
+
+    if not lightingEnabled then
+        cleanupLighting()
+        return
+    end
+
+    if not lightingEffect or not lightingEffect.Parent then
+        lightingEffect = Instance.new("ColorCorrectionEffect")
+        lightingEffect.Name = "BezNigativaLighting"
+        lightingEffect.Parent = Lighting
+    end
+
+    lightingEffect.Enabled = true
+    lightingEffect.TintColor = Color3.new(1, 1, 1):Lerp(selectedColor, math.clamp(lightingStrength, 0, 1))
+    lightingEffect.Brightness = 0
+    lightingEffect.Contrast = 0
+    lightingEffect.Saturation = 0
 end
 
 for _, player in ipairs(Players:GetPlayers()) do createPlayerDrawings(player) end
@@ -1171,7 +1277,13 @@ bind(LocalPlayer.CharacterAdded:Connect(function(character)
     end)
 end))
 
-local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
+local movementControls = {}
+local teleportTargetText = ""
+do
+local movementModules = createModuleStack(MovementPage, 78)
+
+local speedModule = movementModules.Add("Speed", 132)
+movementControls.speedToggle = createToggle(speedModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     speedEnabled = value
     local humanoid = getHumanoid()
     if humanoid then
@@ -1183,8 +1295,13 @@ local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, func
         end
     end
 end)
+local getSpeed, setSpeed = createStepper(speedModule.Settings, 50, "Strength", speedValue, 0, 200, 1, function(value)
+    speedValue = value
+end)
+movementControls.setSpeed = setSpeed
 
-local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
+local jumpModule = movementModules.Add("Jump", 132)
+movementControls.jumpToggle = createToggle(jumpModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     jumpEnabled = value
     local humanoid = getHumanoid()
     if humanoid then
@@ -1198,27 +1315,33 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
         end
     end
 end)
+local getJump, setJump = createStepper(jumpModule.Settings, 50, "Strength", jumpValue, 0, 250, 1, function(value)
+    jumpValue = value
+end)
+movementControls.setJump = setJump
 
-local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
+local noclipModule = movementModules.Add("NoClip", 88)
+movementControls.noclipToggle = createToggle(noclipModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     noclipEnabled = value
     if not value then
         restoreNoclip()
     end
 end)
 
-local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
+local flyModule = movementModules.Add("Fly", 180)
+movementControls.flyToggle = createToggle(flyModule.Settings, 8, 8, 190, "Enabled", false, function(value)
     flyEnabled = value
     setFlyState(value)
 end)
-
-local getSpeed, setSpeed = createStepper(MovementPage, 174, "Speed", speedValue, 0, 200, 1, function(v) speedValue = v end)
-local getJump, setJump = createStepper(MovementPage, 216, "Jump", jumpValue, 0, 250, 1, function(v) jumpValue = v end)
-local getFlySpeed, setFlySpeed = createStepper(MovementPage, 258, "Fly speed", flySpeed, 0, 300, 1, function(v) flySpeed = v end)
+local getFlySpeed, setFlySpeed = createStepper(flyModule.Settings, 50, "Strength", flySpeed, 0, 300, 1, function(value)
+    flySpeed = value
+end)
+movementControls.setFlySpeed = setFlySpeed
 
 local flyHint = Instance.new("TextLabel")
 flyHint.BackgroundTransparency = 1
-flyHint.Position = UDim2.fromOffset(18, 306)
-flyHint.Size = UDim2.new(1, -36, 0, 42)
+flyHint.Position = UDim2.fromOffset(8, 92)
+flyHint.Size = UDim2.new(1, -16, 0, 42)
 flyHint.Font = Enum.Font.Code
 flyHint.Text = "Fly controls: WASD | Space: up | LeftCtrl: down"
 flyHint.TextColor3 = Color3.fromRGB(140, 140, 140)
@@ -1226,11 +1349,9 @@ flyHint.TextSize = 12
 flyHint.TextWrapped = true
 flyHint.TextXAlignment = Enum.TextXAlignment.Left
 flyHint.TextYAlignment = Enum.TextYAlignment.Top
-flyHint.Parent = MovementPage
+flyHint.Parent = flyModule.Settings
 
-local teleportTargetText = ""
-local movementModules = createModuleStack(MovementPage, 356)
-local teleportModule = movementModules.Add("Teleport", 136)
+local teleportModule = movementModules.Add("Teleport", 310)
 
 local teleportInput = Instance.new("TextBox")
 teleportInput.Position = UDim2.fromOffset(8, 8)
@@ -1245,6 +1366,7 @@ teleportInput.TextColor3 = Color3.fromRGB(230, 230, 230)
 teleportInput.PlaceholderColor3 = Color3.fromRGB(125, 125, 125)
 teleportInput.TextSize = 12
 teleportInput.Parent = teleportModule.Settings
+movementControls.teleportInput = teleportInput
 
 local teleportInputCorner = Instance.new("UICorner")
 teleportInputCorner.CornerRadius = UDim.new(0, 4)
@@ -1277,6 +1399,76 @@ teleportStatus.TextSize = 11
 teleportStatus.TextXAlignment = Enum.TextXAlignment.Left
 teleportStatus.TextWrapped = true
 teleportStatus.Parent = teleportModule.Settings
+
+local teleportList = Instance.new("ScrollingFrame")
+teleportList.Position = UDim2.fromOffset(8, 84)
+teleportList.Size = UDim2.new(1, -16, 0, 176)
+teleportList.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+teleportList.BorderSizePixel = 0
+teleportList.ScrollBarThickness = 4
+teleportList.ScrollBarImageColor3 = Color3.fromRGB(75, 105, 120)
+teleportList.CanvasSize = UDim2.fromOffset(0, 0)
+teleportList.Parent = teleportModule.Settings
+
+local teleportListCorner = Instance.new("UICorner")
+teleportListCorner.CornerRadius = UDim.new(0, 4)
+teleportListCorner.Parent = teleportList
+
+local refreshTeleportList
+refreshTeleportList = function()
+    for _, child in ipairs(teleportList:GetChildren()) do
+        if child.Name == "TeleportPlayerRow" then child:Destroy() end
+    end
+
+    local filterKey = normalizeFriendName(teleportInput.Text) or ""
+    local matches = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local userKey = normalizeFriendName(player.Name) or ""
+            local displayKey = normalizeFriendName(player.DisplayName) or ""
+            if filterKey == "" or userKey:sub(1, #filterKey) == filterKey or displayKey:sub(1, #filterKey) == filterKey then
+                table.insert(matches, player)
+            end
+        end
+    end
+    table.sort(matches, function(a, b)
+        return string.lower(a.Name) < string.lower(b.Name)
+    end)
+
+    for index, player in ipairs(matches) do
+        local listedPlayer = player
+        local row = Instance.new("TextButton")
+        row.Name = "TeleportPlayerRow"
+        row.Position = UDim2.fromOffset(5, 5 + ((index - 1) * 32))
+        row.Size = UDim2.new(1, -10, 0, 27)
+        row.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+        row.BorderSizePixel = 0
+        row.AutoButtonColor = false
+        row.Font = Enum.Font.Code
+        row.Text = listedPlayer.DisplayName .. "  (@" .. listedPlayer.Name .. ")"
+        row.TextColor3 = isFriend(listedPlayer) and Color3.fromRGB(80, 225, 105) or Color3.fromRGB(225, 225, 225)
+        row.TextSize = 11
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.Parent = teleportList
+
+        local rowPadding = Instance.new("UIPadding")
+        rowPadding.PaddingLeft = UDim.new(0, 8)
+        rowPadding.Parent = row
+
+        local rowCorner = Instance.new("UICorner")
+        rowCorner.CornerRadius = UDim.new(0, 3)
+        rowCorner.Parent = row
+
+        row.MouseButton1Click:Connect(function()
+            teleportTargetText = listedPlayer.Name
+            teleportInput.Text = listedPlayer.Name
+            teleportStatus.Text = "Selected @" .. listedPlayer.Name
+            if requestConfigSave then requestConfigSave() end
+        end)
+    end
+
+    teleportList.CanvasSize = UDim2.fromOffset(0, 10 + (#matches * 32))
+end
 
 local function findTeleportPlayer(rawName)
     local key = normalizeFriendName(rawName)
@@ -1331,6 +1523,11 @@ bind(teleportInput.FocusLost:Connect(function(enterPressed)
     if requestConfigSave then requestConfigSave() end
     if enterPressed then teleportToInputPlayer() end
 end))
+bind(teleportInput:GetPropertyChangedSignal("Text"):Connect(refreshTeleportList))
+bind(Players.PlayerAdded:Connect(function() task.defer(refreshTeleportList) end))
+bind(Players.PlayerRemoving:Connect(function() task.defer(refreshTeleportList) end))
+refreshTeleportList()
+end
 
 local function updateNoclip()
     if not noclipEnabled then return end
@@ -1812,15 +2009,23 @@ configStatus.Parent = OtherPage
 
 local function buildConfig()
     return {
-        version = 5,
+        version = 6,
         friends = friendConfigList(),
         visual = {
             esp = espEnabled,
             healthBar = healthBarEnabled,
             nameTagsEnabled = nameTagsEnabled,
             nameTagTextSize = nameTagTextSize,
+            nameTagShowDisplayName = nameTagShowDisplayName,
+            nameTagShowUsername = nameTagShowUsername,
+            nameTagShowDistance = nameTagShowDistance,
             chamsEnabled = chamsEnabled,
             chamsTransparency = chamsTransparency,
+            lightingEnabled = lightingEnabled,
+            lightingRed = lightingRed,
+            lightingGreen = lightingGreen,
+            lightingBlue = lightingBlue,
+            lightingStrength = lightingStrength,
         },
         movement = {
             speedEnabled = speedEnabled,
@@ -1873,25 +2078,33 @@ local function applyConfig(data)
     end
     refreshFriendList()
 
-    if type(visual.esp) == "boolean" then espEnabled = visual.esp; espToggle.Set(espEnabled) end
-    if type(visual.healthBar) == "boolean" then healthBarEnabled = visual.healthBar; hpToggle.Set(healthBarEnabled) end
-    if type(visual.nameTagTextSize) == "number" then setNameTagSize(visual.nameTagTextSize) end
-    if type(visual.chamsTransparency) == "number" then setChamsTransparency(visual.chamsTransparency) end
-    if type(visual.nameTagsEnabled) == "boolean" then nameTagsEnabled = visual.nameTagsEnabled; nameTagsToggle.Set(nameTagsEnabled) end
-    if type(visual.chamsEnabled) == "boolean" then chamsEnabled = visual.chamsEnabled; chamsToggle.Set(chamsEnabled) end
+    if type(visual.esp) == "boolean" then espEnabled = visual.esp; visualControls.espToggle.Set(espEnabled) end
+    if type(visual.healthBar) == "boolean" then healthBarEnabled = visual.healthBar; visualControls.hpToggle.Set(healthBarEnabled) end
+    if type(visual.nameTagTextSize) == "number" then visualControls.setNameTagSize(visual.nameTagTextSize) end
+    if type(visual.chamsTransparency) == "number" then visualControls.setChamsTransparency(visual.chamsTransparency) end
+    if type(visual.lightingRed) == "number" then visualControls.setLightingRed(visual.lightingRed) end
+    if type(visual.lightingGreen) == "number" then visualControls.setLightingGreen(visual.lightingGreen) end
+    if type(visual.lightingBlue) == "number" then visualControls.setLightingBlue(visual.lightingBlue) end
+    if type(visual.lightingStrength) == "number" then visualControls.setLightingStrength(visual.lightingStrength) end
+    if type(visual.nameTagsEnabled) == "boolean" then nameTagsEnabled = visual.nameTagsEnabled; visualControls.nameTagsToggle.Set(nameTagsEnabled) end
+    if type(visual.nameTagShowDisplayName) == "boolean" then nameTagShowDisplayName = visual.nameTagShowDisplayName; visualControls.nameTagDisplayToggle.Set(nameTagShowDisplayName) end
+    if type(visual.nameTagShowUsername) == "boolean" then nameTagShowUsername = visual.nameTagShowUsername; visualControls.nameTagUsernameToggle.Set(nameTagShowUsername) end
+    if type(visual.nameTagShowDistance) == "boolean" then nameTagShowDistance = visual.nameTagShowDistance; visualControls.nameTagDistanceToggle.Set(nameTagShowDistance) end
+    if type(visual.chamsEnabled) == "boolean" then chamsEnabled = visual.chamsEnabled; visualControls.chamsToggle.Set(chamsEnabled) end
+    if type(visual.lightingEnabled) == "boolean" then lightingEnabled = visual.lightingEnabled; visualControls.lightingToggle.Set(lightingEnabled) end
 
-    if type(movement.speed) == "number" then setSpeed(movement.speed) end
-    if type(movement.jump) == "number" then setJump(movement.jump) end
-    if type(movement.flySpeed) == "number" then setFlySpeed(movement.flySpeed) end
+    if type(movement.speed) == "number" then movementControls.setSpeed(movement.speed) end
+    if type(movement.jump) == "number" then movementControls.setJump(movement.jump) end
+    if type(movement.flySpeed) == "number" then movementControls.setFlySpeed(movement.flySpeed) end
     if type(movement.teleportTarget) == "string" then
         teleportTargetText = movement.teleportTarget
-        teleportInput.Text = teleportTargetText
+        movementControls.teleportInput.Text = teleportTargetText
     end
 
-    if type(movement.speedEnabled) == "boolean" then speedEnabled = movement.speedEnabled; speedToggle.Set(speedEnabled) end
-    if type(movement.jumpEnabled) == "boolean" then jumpEnabled = movement.jumpEnabled; jumpToggle.Set(jumpEnabled) end
-    if type(movement.noclipEnabled) == "boolean" then noclipEnabled = movement.noclipEnabled; noclipToggle.Set(noclipEnabled) end
-    if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
+    if type(movement.speedEnabled) == "boolean" then speedEnabled = movement.speedEnabled; movementControls.speedToggle.Set(speedEnabled) end
+    if type(movement.jumpEnabled) == "boolean" then jumpEnabled = movement.jumpEnabled; movementControls.jumpToggle.Set(jumpEnabled) end
+    if type(movement.noclipEnabled) == "boolean" then noclipEnabled = movement.noclipEnabled; movementControls.noclipToggle.Set(noclipEnabled) end
+    if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; movementControls.flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
 
     if type(combat.fov) == "number" then setFov(combat.fov) end
     if type(combat.smooth) == "number" then
@@ -1992,6 +2205,7 @@ bind(RunService.RenderStepped:Connect(function()
     Camera = workspace.CurrentCamera or Camera
     runSafely("ESP", updateESP)
     runSafely("Chams", updateChams)
+    runSafely("Lighting", updateLighting)
     runSafely("Movement", updateMovement)
     runSafely("NoClip", updateNoclip)
     runSafely("Fly", updateFly)
@@ -2141,6 +2355,7 @@ cleanup = function()
 
     cleanupDrawings()
     cleanupHighlights()
+    cleanupLighting()
     pcall(function() gui:Destroy() end)
     if env.BezNigativaCleanup == cleanup then
         env.BezNigativaCleanup = nil
@@ -2149,4 +2364,4 @@ end
 
 env.BezNigativaCleanup = cleanup
 
-print("[BezNigativa v5.0] Loaded | Combat / Movement / Visual / Friend / Other")
+print("[BezNigativa v6.0] Loaded | Combat / Movement / Visual / Friend / Other")
