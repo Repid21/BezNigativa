@@ -27,6 +27,7 @@ local drawings = {}
 local playerDrawings = {}
 local destroyed = false
 local lastRuntimeErrors = {}
+local cleanup = nil
 
 local function bind(connection)
     table.insert(connections, connection)
@@ -450,7 +451,7 @@ local hpToggle = createToggle(VisualPage, 222, 78, 190, "Health Bar", false, fun
 end)
 
 local function createPlayerDrawings(targetPlayer)
-    if targetPlayer == LocalPlayer or playerDrawings[targetPlayer] or not drawingSupported then return end
+    if destroyed or targetPlayer == LocalPlayer or playerDrawings[targetPlayer] or not drawingSupported then return end
 
     local box = newDrawing("Square")
     local hpBackground = newDrawing("Square")
@@ -908,6 +909,7 @@ local cameraAssistEnabled = false
 local fovRadius = 140
 local smoothValue = 4
 local wallCheckEnabled = true
+local smoothedAimDirection = nil
 local aimGroups = {
     Head = true,
     Neck = false,
@@ -918,6 +920,7 @@ local aimGroups = {
 
 local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
     cameraAssistEnabled = value
+    if not value then smoothedAimDirection = nil end
 end)
 
 local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600, 5, function(v) fovRadius = v end)
@@ -1089,8 +1092,12 @@ local function getBestAimPoint()
 
             if character and humanoid and humanoid.Health > 0 then
                 for _, worldPosition in ipairs(candidatePositions(character)) do
-                    local screenPosition, visible = Camera:WorldToViewportPoint(worldPosition)
-                    if visible and screenPosition.Z > 0 and hasLineOfSight(character, worldPosition) then
+                    local screenPosition = Camera:WorldToViewportPoint(worldPosition)
+                    -- The second WorldToViewportPoint return value is a
+                    -- viewport hint, not an occlusion test. FOV distance is
+                    -- sufficient here and keeps through-wall aiming truly
+                    -- independent from Wall Check.
+                    if screenPosition.Z > 0 and hasLineOfSight(character, worldPosition) then
                         local distance = (Vector2.new(screenPosition.X, screenPosition.Y) - center).Magnitude
                         if distance <= bestDistance then
                             bestDistance = distance
@@ -1121,28 +1128,40 @@ local function updateCombat(deltaTime)
         end
     end
 
-    if not cameraAssistEnabled then return end
+    if not cameraAssistEnabled then
+        smoothedAimDirection = nil
+        return
+    end
 
     local targetPosition = getBestAimPoint()
     if not targetPosition then
+        smoothedAimDirection = nil
         combatStatus.Text = "No selected target inside FOV"
         return
     end
 
     combatStatus.Text = "Tracking closest selected zone inside FOV"
-    local desired = CFrame.lookAt(Camera.CFrame.Position, targetPosition)
+    local cameraPosition = Camera.CFrame.Position
+    local desiredDirection = targetPosition - cameraPosition
+    if desiredDirection.Magnitude <= 0.001 then return end
+    desiredDirection = desiredDirection.Unit
+
     local dt = math.clamp(deltaTime or (1 / 60), 1 / 240, 1 / 15)
     local smooth = math.max(1, smoothValue)
 
     if smooth <= 1 then
-        Camera.CFrame = desired
+        smoothedAimDirection = desiredDirection
     else
-        -- At 60 FPS Smooth 2 moves half of the remaining distance per frame,
-        -- Smooth 3 moves one third, and so on. The exponent keeps the same
-        -- feel at other frame rates.
+        -- CameraScript restores its own angle before this callback every
+        -- frame. Keep a separate accumulated direction so smoothing continues
+        -- from the previous aimed angle instead of restarting every frame.
+        local startDirection = smoothedAimDirection or Camera.CFrame.LookVector
         local alpha = 1 - math.pow(1 - (1 / smooth), dt * 60)
-        Camera.CFrame = Camera.CFrame:Lerp(desired, math.clamp(alpha, 0, 1))
+        local blended = startDirection:Lerp(desiredDirection, math.clamp(alpha, 0, 1))
+        smoothedAimDirection = blended.Magnitude > 0.001 and blended.Unit or desiredDirection
     end
+
+    Camera.CFrame = CFrame.lookAt(cameraPosition, cameraPosition + smoothedAimDirection)
 end
 
 -- OTHER / CONFIG
@@ -1285,7 +1304,14 @@ loadButton.Position = UDim2.fromOffset(222, 78)
 loadButton.Text = "Load Config"
 loadButton.Parent = OtherPage
 
-for _, button in ipairs({saveButton, loadButton}) do
+local unloadButton = saveButton:Clone()
+unloadButton.Position = UDim2.fromOffset(18, 210)
+unloadButton.Size = UDim2.fromOffset(396, 36)
+unloadButton.BackgroundColor3 = Color3.fromRGB(92, 45, 45)
+unloadButton.Text = "Unload Script"
+unloadButton.Parent = OtherPage
+
+for _, button in ipairs({saveButton, loadButton, unloadButton}) do
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 4)
     corner.Parent = button
@@ -1293,6 +1319,14 @@ end
 
 bind(saveButton.MouseButton1Click:Connect(function() saveConfig(false) end))
 bind(loadButton.MouseButton1Click:Connect(function() loadConfig(false) end))
+bind(unloadButton.MouseButton1Click:Connect(function()
+    -- Saving is synchronous for executor file APIs, so cleanup can safely run
+    -- immediately afterward without losing the current UI state.
+    saveConfig(true)
+    task.defer(function()
+        if cleanup then cleanup() end
+    end)
+end))
 
 task.defer(function()
     loadConfig(true)
@@ -1374,7 +1408,7 @@ end))
 
 setPage("Combat")
 
-local function cleanup()
+cleanup = function()
     if destroyed then return end
     destroyed = true
 
@@ -1409,6 +1443,9 @@ local function cleanup()
 
     cleanupDrawings()
     pcall(function() gui:Destroy() end)
+    if env.BezNigativaCleanup == cleanup then
+        env.BezNigativaCleanup = nil
+    end
 end
 
 env.BezNigativaCleanup = cleanup
