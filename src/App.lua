@@ -91,7 +91,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v7.0 modular loaded")
+    print("[BezNigativa] v7.2 modular loaded")
     return self
 end
 

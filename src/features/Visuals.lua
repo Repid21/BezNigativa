@@ -169,6 +169,7 @@ function Visuals:Step()
 end
 
 function Visuals:UpdateLighting()
+    if not self.Effect or not self.Effect.Parent then return end
     self.Effect.Enabled = self.Lighting
     self.Effect.TintColor = Color3.fromRGB(self.LightR, self.LightG, self.LightB)
     self.Effect.Brightness = self.LightStrength / 100
