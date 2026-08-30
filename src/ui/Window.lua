@@ -27,7 +27,7 @@ function Window.new(player, coreGui, janitor)
     gui.Name = "BezNigativaGUI"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
-    gui:SetAttribute("Build", "7.2-modular")
+    gui:SetAttribute("Build", "8.0-modular")
     gui.Parent = parent
     self.Gui = gui
     janitor:Add(gui)
@@ -67,7 +67,7 @@ function Window.new(player, coreGui, janitor)
     title.Position = UDim2.fromOffset(12, 0)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.Text = "BezNigativa v7.2"
+    title.Text = "BezNigativa v8.0"
     title.TextColor3 = Color3.fromRGB(240, 240, 240)
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
@@ -155,7 +155,7 @@ function Window:AddPage(name, subtitle)
     tab.TextColor3 = Color3.fromRGB(175, 175, 175)
     tab.TextSize = 14
     self.tabCounter += 1
-    local preferredOrder = {Combat = 1, Movement = 2, Visuals = 3, Friend = 4, Other = 5}
+    local preferredOrder = {Combat = 1, Movement = 2, Visuals = 3, Friend = 4, Other = 5, Forsaken = 6, ["Murder Mystery 2"] = 6}
     tab.LayoutOrder = preferredOrder[name] or (100 + self.tabCounter)
     tab.Parent = self.Sidebar
     corner(tab, 5)

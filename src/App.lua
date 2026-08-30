@@ -31,6 +31,8 @@ function App.start(loadModule)
         UserInputService = services.UserInputService,
         Lighting = services.Lighting,
         LocalPlayer = player,
+        Workspace = workspace,
+        LoadModule = loadModule,
     }
     context.Touch = function() self.Config:Touch() end
     context.Unload = function() self:Destroy(true) end
@@ -65,14 +67,27 @@ function App.start(loadModule)
     self.Movement = createFeature("features/Movement", "Movement")
     self.Combat = createFeature("features/Combat", "Combat")
     self.Other = createFeature("features/Other", "Other")
+    self.GameProfile = emptyFeature()
+    local detectorLoaded, Detector = pcall(loadModule, "games/Detector")
+    if detectorLoaded then
+        local detected, profile = pcall(Detector.Detect, game)
+        if detected and profile then
+            self.GameProfile = createFeature(profile.Module, profile.Name)
+            self.GameProfileName = profile.Name
+            print("[BezNigativa] detected " .. profile.Name .. " (place " .. tostring(game.PlaceId) .. ")")
+        end
+    else
+        warn("[BezNigativa/GameDetector] " .. tostring(Detector))
+    end
 
     self.Config:SetProvider(function()
         return {
-            version = 7,
+            version = 8,
             friends = self.Friends:GetConfig(),
             visuals = self.Visuals:GetConfig(),
             movement = self.Movement:GetConfig(),
             combat = self.Combat:GetConfig(),
+            gameProfile = self.GameProfile:GetConfig(),
         }
     end)
     local saved = self.Config:Load()
@@ -81,6 +96,7 @@ function App.start(loadModule)
         self.Visuals:ApplyConfig(saved.visuals)
         self.Movement:ApplyConfig(saved.movement)
         self.Combat:ApplyConfig(saved.combat or saved.aimbot)
+        self.GameProfile:ApplyConfig(saved.gameProfile)
     end
 
     self.Window:ShowPage("Combat")
@@ -91,7 +107,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v7.2 modular loaded")
+    print("[BezNigativa] v8.0 modular loaded")
     return self
 end
 
@@ -102,6 +118,7 @@ function App:Destroy(save)
     if self.Combat then self.Combat.Enabled = false end
     if self.Visuals then self.Visuals:Destroy() end
     if self.Movement then self.Movement:Destroy() end
+    if self.GameProfile then self.GameProfile:Destroy() end
     if self.Janitor then self.Janitor:Cleanup() end
     local environment = getgenv and getgenv() or _G
     if environment.BezNigativaApp == self then environment.BezNigativaApp = nil end

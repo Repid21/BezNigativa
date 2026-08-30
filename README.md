@@ -14,6 +14,10 @@ src/
   features/Movement.lua
   features/Visuals.lua
   features/Other.lua
+  games/Detector.lua
+  games/RoleChams.lua
+  games/Forsaken.lua
+  games/MurderMystery2.lua
 ```
 
 Если файлы лежат не в стандартной папке `src`, перед запуском укажите путь:
@@ -33,3 +37,5 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/m
 ```
 
 После изменений в классах заново запустите `build.ps1`, чтобы обновить standalone-файл.
+
+Поддерживаемые игровые профили определяются по Universe ID: Forsaken и Murder Mystery 2. Для распознанной игры внизу боковой панели появляется отдельная вкладка с Role Chams.

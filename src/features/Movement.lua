@@ -10,11 +10,11 @@ end
 function Movement.new(ctx)
     local self = setmetatable({
         ctx = ctx,
-        Speed = false, SpeedValue = 32,
+        Speed = false, SpeedValue = 24,
         Jump = false, JumpValue = 80,
         Noclip = false,
         Fly = false, FlySpeed = 55,
-        OriginalCollision = {},
+        OriginalCollision = {}, HumanoidConnections = {},
     }, Movement)
 
     local page = ctx.Window:AddPage("Movement", "Движение и телепорт к игроку")
@@ -25,7 +25,7 @@ function Movement.new(ctx)
         if v then self:ApplyHumanoid() else self:RestoreSpeed() end
         ctx.Touch()
     end)
-    self.SpeedValueControl = ctx.Window:Slider(speed.Settings, 48, "Strength", 32, 16, 250, 1, function(v) self.SpeedValue = v; self:ApplyHumanoid(); ctx.Touch() end)
+    self.SpeedValueControl = ctx.Window:Slider(speed.Settings, 48, "Strength", 24, 0, 200, 1, function(v) self.SpeedValue = v; self:ApplyHumanoid(); ctx.Touch() end)
 
     local jump = stack:Add("Jump", 132)
     self.JumpControl = ctx.Window:Toggle(jump.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
@@ -57,14 +57,15 @@ function Movement.new(ctx)
     ctx.Janitor:Add(ctx.Players.PlayerRemoving:Connect(function() task.defer(function() self:RenderPlayers() end) end))
     ctx.Janitor:Add(ctx.LocalPlayer.CharacterAdded:Connect(function()
         self:StopFly(); table.clear(self.OriginalCollision)
-        self.ActiveHumanoid = nil
-        task.defer(function() self:ApplyHumanoid() end)
+        self:DisconnectHumanoid()
+        task.defer(function() self:WatchHumanoid(); self:ApplyHumanoid() end)
     end))
     ctx.Janitor:Add(ctx.RunService.Stepped:Connect(function() self:StepNoclip() end))
     ctx.Janitor:Add(ctx.RunService.Heartbeat:Connect(function()
         local ok, message = pcall(function() self:StepMovement() end)
         if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Movement] " .. tostring(message)) end
     end))
+    self:WatchHumanoid()
     return self
 end
 
@@ -75,28 +76,53 @@ function Movement:CharacterParts()
     return character, humanoid, root
 end
 
-function Movement:ApplyHumanoid()
+function Movement:DisconnectHumanoid()
+    for _, connection in ipairs(self.HumanoidConnections) do pcall(function() connection:Disconnect() end) end
+    table.clear(self.HumanoidConnections)
+    self.ActiveHumanoid = nil
+end
+
+function Movement:WatchHumanoid()
     local _, humanoid = self:CharacterParts()
-    if not humanoid then return end
-    if self.ActiveHumanoid ~= humanoid then
-        self.ActiveHumanoid = humanoid
-        self.DefaultWalkSpeed = humanoid.WalkSpeed
-        self.DefaultJumpPower = humanoid.JumpPower
-        self.DefaultJumpHeight = humanoid.JumpHeight
+    if not humanoid or self.ActiveHumanoid == humanoid then return humanoid end
+    self:DisconnectHumanoid()
+    self.ActiveHumanoid = humanoid
+    self.DefaultWalkSpeed = humanoid.WalkSpeed
+    self.DefaultJumpPower = humanoid.JumpPower
+    self.DefaultJumpHeight = humanoid.JumpHeight
+    local function enforce()
+        if not self.ApplyingMovement then self:ApplyHumanoid() end
     end
-    if self.Speed then humanoid.WalkSpeed = self.SpeedValue end
-    if self.Jump then
-        if humanoid.UseJumpPower then
-            humanoid.JumpPower = self.JumpValue
-        else
-            humanoid.JumpHeight = math.max(7.2, self.JumpValue / 7)
+    for _, property in ipairs({"WalkSpeed", "JumpPower", "JumpHeight", "UseJumpPower"}) do
+        local connection = humanoid:GetPropertyChangedSignal(property):Connect(enforce)
+        table.insert(self.HumanoidConnections, connection)
+        self.ctx.Janitor:Add(connection)
+    end
+    return humanoid
+end
+
+function Movement:ApplyHumanoid()
+    local humanoid = self:WatchHumanoid()
+    if not humanoid or self.ApplyingMovement then return end
+    self.ApplyingMovement = true
+    local ok, message = pcall(function()
+        if self.Speed and humanoid.WalkSpeed ~= self.SpeedValue then humanoid.WalkSpeed = self.SpeedValue end
+        if self.Jump then
+            if humanoid.UseJumpPower then
+                if humanoid.JumpPower ~= self.JumpValue then humanoid.JumpPower = self.JumpValue end
+            elseif humanoid.JumpHeight ~= math.max(7.2, self.JumpValue / 7) then
+                humanoid.JumpHeight = math.max(7.2, self.JumpValue / 7)
+            end
         end
-    end
+    end)
+    self.ApplyingMovement = false
+    if not ok then error(message) end
 end
 
 function Movement:RestoreSpeed()
     local _, humanoid = self:CharacterParts()
-    if humanoid then humanoid.WalkSpeed = self.DefaultWalkSpeed or 16 end
+    if not humanoid then return end
+    humanoid.WalkSpeed = self.DefaultWalkSpeed or 16
 end
 
 function Movement:RestoreJump()
@@ -152,13 +178,6 @@ end
 function Movement:StepMovement()
     self:ApplyHumanoid()
     local _, humanoid, root = self:CharacterParts()
-    if self.Speed and humanoid and root and humanoid.Health > 0 then
-        local move = humanoid.MoveDirection
-        if move.Magnitude > 0.01 then
-            local current = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(move.X * self.SpeedValue, current.Y, move.Z * self.SpeedValue)
-        end
-    end
     if not self.Fly then return end
     local camera = workspace.CurrentCamera
     if not humanoid or not root or not camera then return end
@@ -252,7 +271,7 @@ end
 
 function Movement:ApplyConfig(data)
     if type(data) ~= "table" then return end
-    self.Speed = data.speed == true; self.SpeedValue = math.clamp(tonumber(data.speedValue) or self.SpeedValue, 16, 250)
+    self.Speed = data.speed == true; self.SpeedValue = math.clamp(tonumber(data.speedValue) or self.SpeedValue, 0, 200)
     self.Jump = data.jump == true; self.JumpValue = math.clamp(tonumber(data.jumpValue) or self.JumpValue, 25, 250)
     self.Noclip = data.noclip == true; self.Fly = data.fly == true
     self.FlySpeed = math.clamp(tonumber(data.flySpeed) or self.FlySpeed, 10, 250)
@@ -268,6 +287,7 @@ function Movement:Destroy()
     self:RestoreCollision()
     self.Speed, self.Jump = false, false
     self:RestoreSpeed(); self:RestoreJump()
+    self:DisconnectHumanoid()
 end
 
 return Movement
