@@ -750,7 +750,6 @@ local function updateFly()
     local look = Camera.CFrame.LookVector
     local right = Camera.CFrame.RightVector
 
-    -- W/S follow the full camera look direction, including pitch.
     local forward = look.Magnitude > 0.001 and look.Unit or Vector3.new(0, 0, -1)
     local strafe = right.Magnitude > 0.001 and right.Unit or Vector3.new(1, 0, 0)
 
@@ -929,7 +928,9 @@ local function candidatePositions(character)
     end
 
     return result
-endlocal function hasLineOfSight(targetCharacter, worldPosition)
+end
+
+local function hasLineOfSight(targetCharacter, worldPosition)
     if not wallCheckEnabled or not Camera then return true end
 
     local direction = worldPosition - Camera.CFrame.Position
