@@ -7,6 +7,15 @@ local function corner(parent, radius)
     item.Parent = parent
 end
 
+local function inputName(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then return input.KeyCode.Name end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then return "MouseButton1" end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then return "MouseButton2" end
+    return nil
+end
+
+local BINDABLE = {"Speed", "Jump", "Noclip", "Fly"}
+
 function Movement.new(ctx)
     local self = setmetatable({
         ctx = ctx,
@@ -14,45 +23,40 @@ function Movement.new(ctx)
         Jump = false, JumpValue = 80,
         Noclip = false,
         Fly = false, FlySpeed = 55,
+        Bindings = {Speed = nil, Jump = nil, Noclip = nil, Fly = nil},
+        BindModes = {Speed = "Toggle", Jump = "Toggle", Noclip = "Toggle", Fly = "Toggle"},
+        BindHeld = {}, BindControls = {}, ModeControls = {},
         OriginalCollision = {}, HumanoidConnections = {},
     }, Movement)
 
     local page = ctx.Window:AddPage("Movement", "Движение и телепорт к игроку")
     local stack = ctx.Window:ModuleStack(page, 70)
-    local speed = stack:Add("Speed", 132)
+    local speed = stack:Add("Speed", 172)
     self.SpeedControl = ctx.Window:Toggle(speed.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
-        self.Speed = v
-        if v then self:ApplyHumanoid() else self:RestoreSpeed() end
-        self:RefreshLoops()
-        ctx.Touch()
+        self:SetFeature("Speed", v, true, false)
     end)
     self.SpeedValueControl = ctx.Window:Slider(speed.Settings, 48, "Strength", 24, 0, 200, 1, function(v) self.SpeedValue = v; self:ApplyHumanoid(); ctx.Touch() end)
+    self:BuildBinding(speed.Settings, 88, "Speed")
 
-    local jump = stack:Add("Jump", 132)
+    local jump = stack:Add("Jump", 172)
     self.JumpControl = ctx.Window:Toggle(jump.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
-        self.Jump = v
-        if v then self:ApplyHumanoid() else self:RestoreJump() end
-        self:RefreshLoops()
-        ctx.Touch()
+        self:SetFeature("Jump", v, true, false)
     end)
     self.JumpValueControl = ctx.Window:Slider(jump.Settings, 48, "Strength", 80, 25, 250, 1, function(v) self.JumpValue = v; self:ApplyHumanoid(); ctx.Touch() end)
+    self:BuildBinding(jump.Settings, 88, "Jump")
 
-    local noclip = stack:Add("NoClip", 88)
+    local noclip = stack:Add("NoClip", 132)
     self.NoclipControl = ctx.Window:Toggle(noclip.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
-        self.Noclip = v
-        if not v then self:RestoreCollision() end
-        self:RefreshLoops()
-        ctx.Touch()
+        self:SetFeature("Noclip", v, true, false)
     end)
+    self:BuildBinding(noclip.Settings, 48, "Noclip")
 
-    local fly = stack:Add("Fly", 132)
+    local fly = stack:Add("Fly", 172)
     self.FlyControl = ctx.Window:Toggle(fly.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
-        self.Fly = v
-        if not v then self:StopFly() end
-        self:RefreshLoops()
-        ctx.Touch()
+        self:SetFeature("Fly", v, true, false)
     end)
     self.FlyValueControl = ctx.Window:Slider(fly.Settings, 48, "Strength", 55, 10, 250, 1, function(v) self.FlySpeed = v; ctx.Touch() end)
+    self:BuildBinding(fly.Settings, 88, "Fly")
 
     local teleport = stack:Add("Teleport", 310)
     self:BuildTeleport(teleport.Settings)
@@ -64,9 +68,111 @@ function Movement.new(ctx)
         self:DisconnectHumanoid()
         task.defer(function() self:WatchHumanoid(); self:ApplyHumanoid() end)
     end))
+    ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input, processed)
+        self:HandleBindBegan(input, processed)
+    end))
+    ctx.Janitor:Add(ctx.UserInputService.InputEnded:Connect(function(input)
+        self:HandleBindEnded(input)
+    end))
     ctx.Janitor:Add(function() self:DisconnectLoops() end)
     self:WatchHumanoid()
     return self
+end
+
+function Movement:BuildBinding(parent, y, feature)
+    local mode = self.ctx.Window:Button(parent, UDim2.fromOffset(10, y), UDim2.new(0.5, -15, 0, 34), "Mode: Toggle", function()
+        if self.BindHeld[feature] then
+            self.BindHeld[feature] = false
+            self:SetFeature(feature, false, false, true)
+        end
+        self.BindModes[feature] = self.BindModes[feature] == "Hold" and "Toggle" or "Hold"
+        self:DrawBinding(feature)
+        self.ctx.Touch()
+    end)
+    local bind = self.ctx.Window:Button(parent, UDim2.new(0.5, 5, 0, y), UDim2.new(0.5, -15, 0, 34), "Bind: None", function()
+        if self.CapturingBind and self.CapturingBind ~= feature then self:DrawBinding(self.CapturingBind) end
+        self.CapturingBind = feature
+        self:DrawBinding(feature)
+    end)
+    self.ModeControls[feature], self.BindControls[feature] = mode, bind
+    self:DrawBinding(feature)
+end
+
+function Movement:DrawBinding(feature)
+    local mode = self.ModeControls[feature]
+    local bind = self.BindControls[feature]
+    if mode then mode.Text = "Mode: " .. (self.BindModes[feature] or "Toggle") end
+    if bind then
+        bind.Text = self.CapturingBind == feature and "ESC / Del / key..." or "Bind: " .. (self.Bindings[feature] or "None")
+    end
+end
+
+function Movement:SetFeature(feature, value, touchConfig, updateControl)
+    value = value == true
+    self[feature] = value
+    if feature == "Speed" then
+        if value then self:ApplyHumanoid() else self:RestoreSpeed() end
+    elseif feature == "Jump" then
+        if value then self:ApplyHumanoid() else self:RestoreJump() end
+    elseif feature == "Noclip" then
+        if not value then self:RestoreCollision() end
+    elseif feature == "Fly" and not value then
+        self:StopFly()
+    end
+    if updateControl then
+        local control = self[feature .. "Control"]
+        if control then control.Set(value) end
+    end
+    self:RefreshLoops()
+    if touchConfig then self.ctx.Touch() end
+end
+
+function Movement:HandleBindBegan(input, processed)
+    if self.CapturingBind then
+        local feature = self.CapturingBind
+        if input.KeyCode == Enum.KeyCode.Escape then
+            self.CapturingBind = nil
+        elseif input.KeyCode == Enum.KeyCode.Delete or input.KeyCode == Enum.KeyCode.Backspace then
+            self.Bindings[feature] = nil
+            if self.BindHeld[feature] then self:SetFeature(feature, false, false, true) end
+            self.BindHeld[feature] = false
+            self.CapturingBind = nil
+            self.ctx.Touch()
+        else
+            local name = inputName(input)
+            if name then
+                self.Bindings[feature] = name
+                self.CapturingBind = nil
+                self.ctx.Touch()
+            end
+        end
+        self:DrawBinding(feature)
+        return
+    end
+    if processed then return end
+    local name = inputName(input)
+    if not name then return end
+    for _, feature in ipairs(BINDABLE) do
+        if self.Bindings[feature] == name then
+            if self.BindModes[feature] == "Hold" then
+                self.BindHeld[feature] = true
+                self:SetFeature(feature, true, false, true)
+            else
+                self:SetFeature(feature, not self[feature], true, true)
+            end
+        end
+    end
+end
+
+function Movement:HandleBindEnded(input)
+    local name = inputName(input)
+    if not name then return end
+    for _, feature in ipairs(BINDABLE) do
+        if self.BindModes[feature] == "Hold" and self.BindHeld[feature] and self.Bindings[feature] == name then
+            self.BindHeld[feature] = false
+            self:SetFeature(feature, false, false, true)
+        end
+    end
 end
 
 function Movement:DisconnectLoops()
@@ -285,10 +391,18 @@ function Movement:TeleportTo(player)
 end
 
 function Movement:GetConfig()
+    local savedNoclip = self.Noclip
+    if self.ForcedNoclipPrevious ~= nil then savedNoclip = self.ForcedNoclipPrevious == true end
     return {
         speed = self.Speed, speedValue = self.SpeedValue,
         jump = self.Jump, jumpValue = self.JumpValue,
-        noclip = self.Noclip, fly = self.Fly, flySpeed = self.FlySpeed,
+        noclip = savedNoclip, fly = self.Fly, flySpeed = self.FlySpeed,
+        binds = {
+            Speed = {key = self.Bindings.Speed, mode = self.BindModes.Speed},
+            Jump = {key = self.Bindings.Jump, mode = self.BindModes.Jump},
+            Noclip = {key = self.Bindings.Noclip, mode = self.BindModes.Noclip},
+            Fly = {key = self.Bindings.Fly, mode = self.BindModes.Fly},
+        },
     }
 end
 
@@ -298,6 +412,13 @@ function Movement:ApplyConfig(data)
     self.Jump = data.jump == true; self.JumpValue = math.clamp(tonumber(data.jumpValue) or self.JumpValue, 25, 250)
     self.Noclip = data.noclip == true; self.Fly = data.fly == true
     self.FlySpeed = math.clamp(tonumber(data.flySpeed) or self.FlySpeed, 10, 250)
+    local binds = type(data.binds) == "table" and data.binds or {}
+    for _, feature in ipairs(BINDABLE) do
+        local entry = type(binds[feature]) == "table" and binds[feature] or {}
+        self.Bindings[feature] = type(entry.key) == "string" and entry.key or nil
+        self.BindModes[feature] = entry.mode == "Hold" and "Hold" or "Toggle"
+        self:DrawBinding(feature)
+    end
     self.SpeedControl.Set(self.Speed); self.SpeedValueControl.Set(self.SpeedValue)
     self.JumpControl.Set(self.Jump); self.JumpValueControl.Set(self.JumpValue)
     self.NoclipControl.Set(self.Noclip); self.FlyControl.Set(self.Fly); self.FlyValueControl.Set(self.FlySpeed)

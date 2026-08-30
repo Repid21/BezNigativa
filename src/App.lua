@@ -66,6 +66,7 @@ function App.start(loadModule)
     context.Friends = self.Friends
     self.Visuals = createFeature("features/Visuals", "Visuals")
     self.Movement = createFeature("features/Movement", "Movement")
+    context.Movement = self.Movement
     self.Combat = createFeature("features/Combat", "Combat")
     self.Other = createFeature("features/Other", "Other")
     self.GameProfile = emptyFeature()
@@ -86,7 +87,7 @@ function App.start(loadModule)
         for name, value in pairs(self.SavedGameProfiles or {}) do gameProfiles[name] = value end
         if self.GameProfileName then gameProfiles[self.GameProfileName] = self.GameProfile:GetConfig() end
         return {
-            version = 8.2,
+            version = 8.3,
             friends = self.Friends:GetConfig(),
             visuals = self.Visuals:GetConfig(),
             movement = self.Movement:GetConfig(),
@@ -113,7 +114,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v8.2 modular loaded")
+    print("[BezNigativa] v8.3 modular loaded")
     return self
 end
 
@@ -123,8 +124,8 @@ function App:Destroy(save)
     if save and self.Config then self.Config:SaveNow() end
     if self.Combat then self.Combat.Enabled = false end
     if self.Visuals then self.Visuals:Destroy() end
-    if self.Movement then self.Movement:Destroy() end
     if self.GameProfile then self.GameProfile:Destroy() end
+    if self.Movement then self.Movement:Destroy() end
     if self.Janitor then self.Janitor:Cleanup() end
     local environment = getgenv and getgenv() or _G
     if environment.BezNigativaApp == self then environment.BezNigativaApp = nil end

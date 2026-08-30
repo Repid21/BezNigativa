@@ -29,12 +29,13 @@ function MurderMystery2.new(ctx)
         RoleChamsEnabled = false,
         RoleAimOnly = false,
         AutoShoot = false,
+        ShootThroughWalls = false,
         AutoGun = false,
         GunESP = false,
         AutoFarm = false,
         Elapsed = 0,
         FarmBagElapsed = 0,
-        FarmSpeed = 42,
+        FarmSpeed = 25,
         FarmCollision = setmetatable({}, {__mode = "k"}),
         LastShot = 0,
         TouchedCoins = setmetatable({}, {__mode = "k"}),
@@ -60,11 +61,14 @@ function MurderMystery2.new(ctx)
         self.RoleAimOnly = value; ctx.Touch()
     end)
 
-    local shoot = stack:Add("Auto Shoot", 126)
+    local shoot = stack:Add("Auto Shoot", 170)
     self.AutoShootControl = ctx.Window:Toggle(shoot.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
         self.AutoShoot = value; self:RefreshHeartbeat(); ctx.Touch()
     end)
-    self:AddHint(shoot.Settings, "Стреляет, только если луч первым попал в видимую часть маньяка.")
+    self.ShootWallsControl = ctx.Window:Toggle(shoot.Settings, UDim2.fromOffset(240, 4), 220, "Through Walls", false, function(value)
+        self.ShootThroughWalls = value; ctx.Touch()
+    end)
+    self:AddHint(shoot.Settings, "Through Walls OFF — стреляет только при прямой видимости; ON — игнорирует стены.", 48)
 
     local gun = stack:Add("Dropped Gun", 132)
     self.AutoGunControl = ctx.Window:Toggle(gun.Settings, UDim2.fromOffset(10, 4), 220, "Auto Pickup", false, function(value)
@@ -102,9 +106,9 @@ function MurderMystery2:RefreshHeartbeat()
     end
 end
 
-function MurderMystery2:AddHint(parent, text)
+function MurderMystery2:AddHint(parent, text, y)
     local hint = Instance.new("TextLabel")
-    hint.Position = UDim2.fromOffset(10, 48)
+    hint.Position = UDim2.fromOffset(10, y or 48)
     hint.Size = UDim2.new(1, -20, 0, 38)
     hint.BackgroundTransparency = 1
     hint.Font = Enum.Font.Code
@@ -205,13 +209,22 @@ function MurderMystery2:PickupGun(gunDrop)
     end
 end
 
-function MurderMystery2:VisibleBodyPoint(target)
+function MurderMystery2:TargetPoint(target, origin)
     local character = target and target.Character
-    local camera = self.ctx.Workspace.CurrentCamera
-    if not character or not camera then return nil end
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not character or not root then return nil end
+    if self.ShootThroughWalls then return root.Position end
+
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {self.ctx.LocalPlayer.Character, camera}
+    local excluded = {}
+    if self.ctx.LocalPlayer.Character then table.insert(excluded, self.ctx.LocalPlayer.Character) end
+    local camera = self.ctx.Workspace.CurrentCamera
+    if camera then table.insert(excluded, camera) end
+    for _, player in ipairs(self.ctx.Players:GetPlayers()) do
+        if player.Character then table.insert(excluded, player.Character) end
+    end
+    params.FilterDescendantsInstances = excluded
     params.IgnoreWater = true
     for _, part in ipairs(character:GetChildren()) do
         if part:IsA("BasePart") and part.Transparency < 1 then
@@ -224,11 +237,8 @@ function MurderMystery2:VisibleBodyPoint(target)
                 part.CFrame:PointToWorldSpace(Vector3.new(0, -half.Y, 0)),
             }
             for _, point in ipairs(samples) do
-                local screen, onScreen = camera:WorldToViewportPoint(point)
-                if onScreen and screen.Z > 0 then
-                    local result = self.ctx.Workspace:Raycast(camera.CFrame.Position, point - camera.CFrame.Position, params)
-                    if not result or result.Instance:IsDescendantOf(character) then return point end
-                end
+                local result = self.ctx.Workspace:Raycast(origin, point - origin, params)
+                if not result then return point end
             end
         end
     end
@@ -240,7 +250,32 @@ function MurderMystery2:GetEquippedGun()
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local gun = character and findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"})
     if gun and gun.Parent ~= character and humanoid then humanoid:EquipTool(gun) end
-    return character and character:FindFirstChild("Gun") or character and character:FindFirstChild("Revolver")
+    return gun
+end
+
+function MurderMystery2:FindShootRemote(gun)
+    local knifeLocal = gun and gun:FindFirstChild("KnifeLocal")
+    local createBeam = knifeLocal and knifeLocal:FindFirstChild("CreateBeam")
+    local beamRemote = createBeam and createBeam:FindFirstChild("RemoteFunction")
+    if beamRemote and beamRemote:IsA("RemoteFunction") then return beamRemote, "CreateBeam" end
+
+    local knifeServer = gun and gun:FindFirstChild("KnifeServer")
+    local shootGun = knifeServer and knifeServer:FindFirstChild("ShootGun")
+    if shootGun and (shootGun:IsA("RemoteFunction") or shootGun:IsA("RemoteEvent")) then return shootGun, "ShootGun" end
+
+    local recursive = gun and gun:FindFirstChild("ShootGun", true)
+    if recursive and (recursive:IsA("RemoteFunction") or recursive:IsA("RemoteEvent")) then return recursive, "ShootGun" end
+    return nil, nil
+end
+
+function MurderMystery2:FireGun(remote, signature, point)
+    if remote:IsA("RemoteEvent") then
+        remote:FireServer(0, point, "AH")
+    elseif signature == "ShootGun" then
+        remote:InvokeServer(0, point, "AH")
+    else
+        remote:InvokeServer(1, point, "AH2")
+    end
 end
 
 function MurderMystery2:TryAutoShoot()
@@ -248,17 +283,25 @@ function MurderMystery2:TryAutoShoot()
     local targetRole = self:GetRole(self.ctx.LocalPlayer) == "Murderer" and "Sheriff" or "Murderer"
     local target = self:FindRole(targetRole)
     if not target or target == self.ctx.LocalPlayer then return end
-    local point = self:VisibleBodyPoint(target)
-    if not point then return end
     local gun = self:GetEquippedGun()
     if not gun or gun.Enabled == false then return end
-    local knifeLocal = gun:FindFirstChild("KnifeLocal")
-    local createBeam = knifeLocal and knifeLocal:FindFirstChild("CreateBeam")
-    local remote = createBeam and createBeam:FindFirstChild("RemoteFunction")
-    if not remote or not remote:IsA("RemoteFunction") then return end
+    local handle = gun:FindFirstChild("Handle")
+    local camera = self.ctx.Workspace.CurrentCamera
+    local origin = handle and handle.Position or camera and camera.CFrame.Position
+    if not origin then return end
+    local point = self:TargetPoint(target, origin)
+    if not point then return end
+    local remote, signature = self:FindShootRemote(gun)
+    if not remote then
+        if not self.ShootRemoteWarning then
+            self.ShootRemoteWarning = true
+            warn("[BezNigativa/MM2] Auto Shoot remote not found in equipped gun")
+        end
+        return
+    end
     self.Shooting, self.LastShot = true, os.clock()
     task.spawn(function()
-        pcall(function() remote:InvokeServer(1, point, "AH2") end)
+        pcall(function() self:FireGun(remote, signature, point) end)
         self.Shooting = false
     end)
 end
@@ -333,6 +376,7 @@ function MurderMystery2:TeleportToSpawn()
 end
 
 function MurderMystery2:SetAutoFarm(value)
+    local wasEnabled = self.AutoFarm
     self.AutoFarm = value
     self.BagHandled = false
     self.FarmBagElapsed = 0
@@ -340,9 +384,30 @@ function MurderMystery2:SetAutoFarm(value)
     self.FarmTarget = nil
     self.FarmUnderground = false
     if value then
+        if not wasEnabled then
+            local movement = self.ctx.Movement
+            self.AutoFarmPreviousNoclip = movement and movement.Noclip == true
+            self.AutoFarmForcedNoclip = movement and type(movement.SetFeature) == "function"
+            if self.AutoFarmForcedNoclip then movement.ForcedNoclipPrevious = self.AutoFarmPreviousNoclip end
+        end
+        local movement = self.ctx.Movement
+        if movement and type(movement.SetFeature) == "function" then movement:SetFeature("Noclip", true, false, true) end
         self.FarmStopToken = (self.FarmStopToken or 0) + 1
     else
         self:StopFarmMotion(true)
+        if wasEnabled and self.AutoFarmForcedNoclip then
+            local movement = self.ctx.Movement
+            local restoreValue = self.AutoFarmPreviousNoclip == true
+            local stopToken = self.FarmStopToken
+            task.delay(0.38, function()
+                if self.AutoFarm or self.FarmStopToken ~= stopToken then return end
+                if movement and type(movement.SetFeature) == "function" then
+                    movement:SetFeature("Noclip", restoreValue, false, true)
+                    movement.ForcedNoclipPrevious = nil
+                end
+            end)
+        end
+        self.AutoFarmForcedNoclip, self.AutoFarmPreviousNoclip = nil, nil
     end
     self:RefreshHeartbeat()
 end
@@ -371,7 +436,8 @@ function MurderMystery2:EnsureFarmVelocity(root, character)
     if self.FarmCharacter and self.FarmCharacter ~= character then self:SetFarmCollision(self.FarmCharacter, true) end
     if self.FarmCharacter ~= character then self.FarmUnderground = false end
     self.FarmCharacter = character
-    self:SetFarmCollision(character, false)
+    local movement = self.ctx.Movement
+    if not movement or type(movement.SetFeature) ~= "function" then self:SetFarmCollision(character, false) end
     local velocity = Instance.new("BodyVelocity")
     velocity.Name = "BezNigativaCoinFlight"
     velocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
@@ -410,6 +476,10 @@ end
 
 function MurderMystery2:FarmStep(delta)
     if not self.AutoFarm then return end
+    local movement = self.ctx.Movement
+    if movement and type(movement.SetFeature) == "function" and not movement.Noclip then
+        movement:SetFeature("Noclip", true, false, true)
+    end
     self.FarmBagElapsed += delta
     if self.FarmBagElapsed >= 0.25 then
         self.FarmBagElapsed = 0
@@ -489,6 +559,7 @@ function MurderMystery2:GetConfig()
         roleChams = self.RoleChamsEnabled,
         roleAimOnly = self.RoleAimOnly,
         autoShoot = self.AutoShoot,
+        shootThroughWalls = self.ShootThroughWalls,
         autoGun = self.AutoGun,
         gunESP = self.GunESP,
         autoFarm = self.AutoFarm,
@@ -500,19 +571,28 @@ function MurderMystery2:ApplyConfig(data)
     self.RoleChamsEnabled = data.roleChams == true or data.enabled == true
     self.RoleAimOnly = data.roleAimOnly == true
     self.AutoShoot, self.AutoGun = data.autoShoot == true, data.autoGun == true
+    self.ShootThroughWalls = data.shootThroughWalls == true
     self.GunESP = data.gunESP == true
     self:SetAutoFarm(data.autoFarm == true)
     self.RoleChamsControl.Set(self.RoleChamsEnabled)
     self.RoleAimControl.Set(self.RoleAimOnly)
     self.AutoShootControl.Set(self.AutoShoot)
+    self.ShootWallsControl.Set(self.ShootThroughWalls)
     self.AutoGunControl.Set(self.AutoGun)
     self.GunESPControl.Set(self.GunESP)
     self.AutoFarmControl.Set(self.AutoFarm)
 end
 
 function MurderMystery2:Destroy()
+    local restoreNoclip = self.AutoFarmForcedNoclip and self.AutoFarmPreviousNoclip == true
     self.AutoFarm = false
     self:StopFarmMotion(false)
+    local movement = self.ctx.Movement
+    if self.AutoFarmForcedNoclip and movement and type(movement.SetFeature) == "function" then
+        movement:SetFeature("Noclip", restoreNoclip, false, true)
+        movement.ForcedNoclipPrevious = nil
+    end
+    self.AutoFarmForcedNoclip, self.AutoFarmPreviousNoclip = nil, nil
     self.AutoShoot, self.AutoGun, self.AutoFarm = false, false, false
     self.RoleChamsEnabled, self.GunESP = false, false
     self:RefreshHeartbeat()
