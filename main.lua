@@ -26,10 +26,26 @@ local connections = {}
 local drawings = {}
 local playerDrawings = {}
 local destroyed = false
+local lastRuntimeErrors = {}
 
 local function bind(connection)
     table.insert(connections, connection)
     return connection
+end
+
+-- Keep one broken feature from stopping the rest of the update loop. Roblox
+-- event callbacks do not provide isolation when several updates share the
+-- same function, so every subsystem is guarded independently.
+local function runSafely(name, callback, ...)
+    local ok, err = pcall(callback, ...)
+    if ok then return true end
+
+    local now = os.clock()
+    if not lastRuntimeErrors[name] or now - lastRuntimeErrors[name] >= 5 then
+        lastRuntimeErrors[name] = now
+        warn(string.format("[BezNigativa] %s update failed: %s", name, tostring(err)))
+    end
+    return false
 end
 
 local function removeDrawing(object)
@@ -441,21 +457,34 @@ local function createPlayerDrawings(targetPlayer)
     local hpFill = newDrawing("Square")
     if not box or not hpBackground or not hpFill then return end
 
-    box.Visible = false
-    box.Filled = false
-    box.Thickness = 1.5
-    box.Color = Color3.fromRGB(235, 235, 235)
-    box.Transparency = 1
+    local ok = pcall(function()
+        box.Visible = false
+        box.Filled = false
+        box.Thickness = 1.5
+        box.Color = Color3.fromRGB(235, 235, 235)
+        box.Transparency = 1
 
-    hpBackground.Visible = false
-    hpBackground.Filled = true
-    hpBackground.Color = Color3.fromRGB(18, 18, 18)
-    hpBackground.Transparency = 0.9
+        hpBackground.Visible = false
+        hpBackground.Filled = true
+        hpBackground.Color = Color3.fromRGB(18, 18, 18)
+        hpBackground.Transparency = 0.9
 
-    hpFill.Visible = false
-    hpFill.Filled = true
-    hpFill.Color = Color3.fromRGB(80, 220, 100)
-    hpFill.Transparency = 1
+        hpFill.Visible = false
+        hpFill.Filled = true
+        hpFill.Color = Color3.fromRGB(80, 220, 100)
+        hpFill.Transparency = 1
+    end)
+
+    if not ok then
+        -- A few executors expose Drawing.new but only implement a subset of
+        -- its properties. ESP should become unavailable instead of aborting
+        -- the whole script before Movement and Combat are initialized.
+        drawingSupported = false
+        removeDrawing(box)
+        removeDrawing(hpBackground)
+        removeDrawing(hpFill)
+        return
+    end
 
     playerDrawings[targetPlayer] = {
         Box = box,
@@ -578,6 +607,9 @@ local noclipOriginalCollide = {}
 local flyVelocity = nil
 local flyGyro = nil
 local flyRoot = nil
+local activeHumanoid = nil
+local humanoidConnections = {}
+local applyingMovement = false
 
 local function getHumanoid()
     local character = LocalPlayer.Character
@@ -587,6 +619,18 @@ end
 local function getRoot()
     local character = LocalPlayer.Character
     return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function disconnectHumanoidConnections()
+    for _, connection in ipairs(humanoidConnections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(humanoidConnections)
+end
+
+local function bindHumanoid(connection)
+    table.insert(humanoidConnections, connection)
+    return connection
 end
 
 local function restoreNoclip()
@@ -655,36 +699,109 @@ local function setFlyState(enabled)
     end
 end
 
-local function captureDefaults()
-    local humanoid = getHumanoid()
-    if humanoid then
-        defaults.WalkSpeed = humanoid.WalkSpeed
-        defaults.JumpPower = humanoid.JumpPower
-        defaults.JumpHeight = humanoid.JumpHeight
-    end
+local function captureDefaults(humanoid)
+    humanoid = humanoid or getHumanoid()
+    if not humanoid then return end
+
+    defaults.WalkSpeed = humanoid.WalkSpeed
+    defaults.JumpPower = humanoid.JumpPower
+    defaults.JumpHeight = humanoid.JumpHeight
 end
 
-captureDefaults()
-bind(LocalPlayer.CharacterAdded:Connect(function()
-    restoreNoclip()
-    task.wait(0.2)
-    captureDefaults()
-    if flyEnabled then
-        setFlyState(true)
+local function applyMovementToHumanoid(humanoid)
+    if not humanoid or applyingMovement then return end
+
+    applyingMovement = true
+    local ok, err = pcall(function()
+        if speedEnabled and humanoid.WalkSpeed ~= speedValue then
+            humanoid.WalkSpeed = speedValue
+        end
+
+        if jumpEnabled then
+            if humanoid.UseJumpPower then
+                if humanoid.JumpPower ~= jumpValue then
+                    humanoid.JumpPower = jumpValue
+                end
+            else
+                local gravity = math.max(workspace.Gravity, 0.001)
+                local desiredHeight = math.max(defaults.JumpHeight, (jumpValue * jumpValue) / (2 * gravity))
+                if math.abs(humanoid.JumpHeight - desiredHeight) > 0.001 then
+                    humanoid.JumpHeight = desiredHeight
+                end
+            end
+        end
+    end)
+    applyingMovement = false
+    if not ok then error(err, 0) end
+end
+
+local function watchHumanoid(humanoid)
+    if not humanoid or activeHumanoid == humanoid then return end
+
+    disconnectHumanoidConnections()
+    activeHumanoid = humanoid
+    -- Capture before applying enabled modifiers. This prevents an enabled
+    -- Speed/Jump value from becoming the restore value after a respawn.
+    captureDefaults(humanoid)
+
+    local function enforceMovement()
+        if destroyed or applyingMovement or humanoid ~= activeHumanoid or not humanoid.Parent then return end
+        runSafely("Movement enforce", applyMovementToHumanoid, humanoid)
     end
+
+    bindHumanoid(humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(enforceMovement))
+    bindHumanoid(humanoid:GetPropertyChangedSignal("JumpPower"):Connect(enforceMovement))
+    bindHumanoid(humanoid:GetPropertyChangedSignal("JumpHeight"):Connect(enforceMovement))
+    bindHumanoid(humanoid:GetPropertyChangedSignal("UseJumpPower"):Connect(enforceMovement))
+    bindHumanoid(humanoid.AncestryChanged:Connect(function(_, parent)
+        if not parent and activeHumanoid == humanoid then
+            disconnectHumanoidConnections()
+            activeHumanoid = nil
+        end
+    end))
+end
+
+watchHumanoid(getHumanoid())
+bind(LocalPlayer.CharacterAdded:Connect(function(character)
+    restoreNoclip()
+    destroyFlyControllers()
+    disconnectHumanoidConnections()
+    activeHumanoid = nil
+
+    task.defer(function()
+        local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 10)
+        if destroyed or character ~= LocalPlayer.Character or not humanoid or not humanoid:IsA("Humanoid") then return end
+        watchHumanoid(humanoid)
+        runSafely("Movement respawn", applyMovementToHumanoid, humanoid)
+        if flyEnabled then runSafely("Fly respawn", setFlyState, true) end
+    end)
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
     speedEnabled = value
     local humanoid = getHumanoid()
-    if humanoid and not value then humanoid.WalkSpeed = defaults.WalkSpeed end
+    if humanoid then
+        watchHumanoid(humanoid)
+        if value then
+            runSafely("Speed toggle", applyMovementToHumanoid, humanoid)
+        else
+            humanoid.WalkSpeed = defaults.WalkSpeed
+        end
+    end
 end)
 
 local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
     jumpEnabled = value
     local humanoid = getHumanoid()
-    if humanoid and not value then
-        if humanoid.UseJumpPower then humanoid.JumpPower = defaults.JumpPower else humanoid.JumpHeight = defaults.JumpHeight end
+    if humanoid then
+        watchHumanoid(humanoid)
+        if value then
+            runSafely("Jump toggle", applyMovementToHumanoid, humanoid)
+        elseif humanoid.UseJumpPower then
+            humanoid.JumpPower = defaults.JumpPower
+        else
+            humanoid.JumpHeight = defaults.JumpHeight
+        end
     end
 end)
 
@@ -779,17 +896,9 @@ end
 local function updateMovement()
     local humanoid = getHumanoid()
     if humanoid then
-        if speedEnabled then humanoid.WalkSpeed = speedValue end
-        if jumpEnabled then
-            if humanoid.UseJumpPower then
-                humanoid.JumpPower = jumpValue
-            else
-                humanoid.JumpHeight = math.max(defaults.JumpHeight, (jumpValue * jumpValue) / (2 * workspace.Gravity))
-            end
-        end
+        watchHumanoid(humanoid)
+        applyMovementToHumanoid(humanoid)
     end
-    updateNoclip()
-    updateFly()
 end
 
 -- COMBAT / CAMERA ASSIST
@@ -857,12 +966,18 @@ combatStatus.Parent = CombatPage
 
 local fovCircle = newDrawing("Circle")
 if fovCircle then
-    fovCircle.Visible = false
-    fovCircle.Filled = false
-    fovCircle.Thickness = 1
-    fovCircle.NumSides = 64
-    fovCircle.Color = Color3.fromRGB(210, 210, 210)
-    fovCircle.Transparency = 0.75
+    local ok = pcall(function()
+        fovCircle.Visible = false
+        fovCircle.Filled = false
+        fovCircle.Thickness = 1
+        fovCircle.NumSides = 64
+        fovCircle.Color = Color3.fromRGB(210, 210, 210)
+        fovCircle.Transparency = 0.75
+    end)
+    if not ok then
+        removeDrawing(fovCircle)
+        fovCircle = nil
+    end
 end
 
 local function isFirstPerson()
@@ -875,7 +990,10 @@ local function isFirstPerson()
     local character = LocalPlayer.Character
     local head = character and character:FindFirstChild("Head")
     if head and head:IsA("BasePart") then
-        return (Camera.CFrame.Position - head.Position).Magnitude < 1.5
+        -- Some experiences apply a small first-person camera offset. The old
+        -- 1.5-stud limit rejected those cameras even though they were visibly
+        -- in first person.
+        return (Camera.CFrame.Position - head.Position).Magnitude < 3
     end
 
     return false
@@ -981,9 +1099,15 @@ local function updateCombat(deltaTime)
     if not Camera then return end
 
     if fovCircle then
-        fovCircle.Position = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
-        fovCircle.Radius = fovRadius
-        fovCircle.Visible = cameraAssistEnabled
+        local circleOk = pcall(function()
+            fovCircle.Position = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
+            fovCircle.Radius = fovRadius
+            fovCircle.Visible = cameraAssistEnabled
+        end)
+        if not circleOk then
+            removeDrawing(fovCircle)
+            fovCircle = nil
+        end
     end
 
     if not cameraAssistEnabled then return end
@@ -1159,18 +1283,26 @@ end)
 -- MAIN UPDATE LOOP
 bind(RunService.RenderStepped:Connect(function()
     Camera = workspace.CurrentCamera or Camera
-    updateESP()
-    updateMovement()
+    runSafely("ESP", updateESP)
+    runSafely("Movement", updateMovement)
+    runSafely("NoClip", updateNoclip)
+    runSafely("Fly", updateFly)
 end))
 
 -- Apply AimBot after Roblox's normal camera update so CameraScript does not overwrite it.
 local AIMBOT_RENDER_NAME = "BezNigativaAimBotCamera"
-RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
+-- Unbind defensively as an interrupted previous execution may not have reached
+-- its cleanup function. Last priority also wins over custom camera scripts that
+-- run later than Roblox's default CameraScript.
+pcall(function() RunService:UnbindFromRenderStep(AIMBOT_RENDER_NAME) end)
+RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Last.Value, function(deltaTime)
     Camera = workspace.CurrentCamera or Camera
-    updateCombat(deltaTime)
+    runSafely("AimBot", updateCombat, deltaTime)
 end)
 
-bind(RunService.Heartbeat:Connect(updateMovement))
+bind(RunService.Heartbeat:Connect(function()
+    runSafely("Movement heartbeat", updateMovement)
+end))
 
 -- Window dragging
 local dragging = false
@@ -1222,6 +1354,7 @@ local function cleanup()
 
     restoreNoclip()
     setFlyState(false)
+    disconnectHumanoidConnections()
 
     local humanoid = getHumanoid()
     if humanoid then
