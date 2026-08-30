@@ -1,0 +1,44 @@
+name: Run Controls Upgrade
+
+on:
+  push:
+    paths:
+      - '.github/workflows/run-controls-upgrade.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute patch script
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/upgrade-controls-config.yml').read_text(encoding='utf-8')
+          start = source.index("          python - <<'PY'\n") + len("          python - <<'PY'\n")
+          end = source.index("\n          PY", start)
+          block = source[start:end]
+
+          lines = []
+          for line in block.splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+
+          code = '\n'.join(lines)
+          exec(compile(code, 'upgrade_controls_config.py', 'exec'), {'__name__': '__main__'})
+          PY
+
+      - name: Commit result
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add main.lua
+          git commit -m "Add wall check config sliders and aim speed" || exit 0
+          git push
