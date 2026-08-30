@@ -4,33 +4,19 @@ Visuals.__index = Visuals
 local WHITE = Color3.fromRGB(255, 255, 255)
 local GREEN = Color3.fromRGB(65, 255, 105)
 
-local function removeDrawing(item)
-    if item then pcall(function() item:Remove() end) end
-end
-
-local function newDrawing(kind)
-    if not Drawing or type(Drawing.new) ~= "function" then return nil end
-    local ok, result = pcall(Drawing.new, kind)
-    return ok and result or nil
+local function corner(parent, radius)
+    local item = Instance.new("UICorner")
+    item.CornerRadius = UDim.new(0, radius or 3)
+    item.Parent = parent
 end
 
 function Visuals.new(ctx)
     local self = setmetatable({
-        ctx = ctx,
-        ESP = false,
-        Health = false,
-        NameTags = false,
-        ShowDisplay = true,
-        ShowReal = false,
-        ShowDistance = true,
-        Chams = false,
-        ChamsTransparency = 0.35,
-        Lighting = false,
-        LightR = 255,
-        LightG = 220,
-        LightB = 190,
-        LightStrength = 15,
-        Bundles = {},
+        ctx = ctx, Bundles = {},
+        ESP = false, Health = false,
+        NameTags = false, ShowDisplay = true, ShowReal = false, ShowDistance = true,
+        Chams = false, ChamsTransparency = 0.35,
+        Lighting = false, LightR = 255, LightG = 220, LightB = 190, LightStrength = 15,
     }, Visuals)
 
     local page = ctx.Window:AddPage("Visuals", "ESP, NameTags, Chams и освещение")
@@ -47,14 +33,10 @@ function Visuals.new(ctx)
 
     local chams = stack:Add("Chams", 132)
     self.ChamsControl = ctx.Window:Toggle(chams.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Chams = v; ctx.Touch() end)
-    self.TransparencyControl = ctx.Window:Slider(chams.Settings, 48, "Transparency", 35, 0, 100, 1, function(v)
-        self.ChamsTransparency = v / 100; ctx.Touch()
-    end)
+    self.TransparencyControl = ctx.Window:Slider(chams.Settings, 48, "Transparency", 35, 0, 100, 1, function(v) self.ChamsTransparency = v / 100; ctx.Touch() end)
 
     local lighting = stack:Add("Lighting", 252)
-    self.LightingControl = ctx.Window:Toggle(lighting.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
-        self.Lighting = v; self:UpdateLighting(); ctx.Touch()
-    end)
+    self.LightingControl = ctx.Window:Toggle(lighting.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Lighting = v; self:UpdateLighting(); ctx.Touch() end)
     self.RControl = ctx.Window:Slider(lighting.Settings, 48, "Red", 255, 0, 255, 1, function(v) self.LightR = v; self:UpdateLighting(); ctx.Touch() end)
     self.GControl = ctx.Window:Slider(lighting.Settings, 88, "Green", 220, 0, 255, 1, function(v) self.LightG = v; self:UpdateLighting(); ctx.Touch() end)
     self.BControl = ctx.Window:Slider(lighting.Settings, 128, "Blue", 190, 0, 255, 1, function(v) self.LightB = v; self:UpdateLighting(); ctx.Touch() end)
@@ -68,23 +50,67 @@ function Visuals.new(ctx)
     self.Effect = effect
 
     ctx.Janitor:Add(ctx.Players.PlayerRemoving:Connect(function(player) self:Remove(player) end))
-    ctx.Janitor:Add(ctx.RunService.RenderStepped:Connect(function() self:Step() end))
+    ctx.Janitor:Add(ctx.RunService.RenderStepped:Connect(function()
+        local ok, message = pcall(function() self:Step() end)
+        if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Visuals] " .. tostring(message)) end
+    end))
     return self
 end
 
-function Visuals:Bundle(player)
-    local bundle = self.Bundles[player]
-    if bundle then return bundle end
-    bundle = {
-        Box = newDrawing("Square"),
-        HealthBack = newDrawing("Square"),
-        HealthFill = newDrawing("Square"),
-        Tag = newDrawing("Text"),
-    }
-    if bundle.Box then bundle.Box.Filled = false; bundle.Box.Thickness = 1.5 end
-    if bundle.HealthBack then bundle.HealthBack.Filled = true; bundle.HealthBack.Color = Color3.fromRGB(20, 20, 20) end
-    if bundle.HealthFill then bundle.HealthFill.Filled = true end
-    if bundle.Tag then bundle.Tag.Center = true; bundle.Tag.Outline = true; bundle.Tag.Size = 14; bundle.Tag.Font = 2 end
+function Visuals:CreateBundle(player, character, root)
+    local bundle = {Character = character}
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "BezNigativaVisual"
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = false
+    highlight.Parent = character
+    bundle.Highlight = highlight
+
+    local gui = Instance.new("BillboardGui")
+    gui.Name = "BezNigativaPlayerInfo"
+    gui.Adornee = root
+    gui.AlwaysOnTop = true
+    gui.LightInfluence = 0
+    gui.Size = UDim2.fromOffset(140, 92)
+    gui.StudsOffsetWorldSpace = Vector3.new(0, 3.25, 0)
+    gui.Enabled = false
+    gui.Parent = character
+    bundle.Gui = gui
+
+    local box = Instance.new("Frame")
+    box.Position = UDim2.fromOffset(38, 24)
+    box.Size = UDim2.fromOffset(64, 64)
+    box.BackgroundTransparency = 1
+    box.Parent = gui
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Parent = box
+    bundle.Box, bundle.BoxStroke = box, stroke
+
+    local tag = Instance.new("TextLabel")
+    tag.Size = UDim2.new(1, 0, 0, 20)
+    tag.BackgroundTransparency = 1
+    tag.Font = Enum.Font.Code
+    tag.TextSize = 14
+    tag.TextStrokeTransparency = 0.25
+    tag.Parent = gui
+    bundle.Tag = tag
+
+    local healthBack = Instance.new("Frame")
+    healthBack.Position = UDim2.fromOffset(31, 24)
+    healthBack.Size = UDim2.fromOffset(4, 64)
+    healthBack.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    healthBack.BorderSizePixel = 0
+    healthBack.Parent = gui
+    corner(healthBack, 2)
+    local healthFill = Instance.new("Frame")
+    healthFill.AnchorPoint = Vector2.new(0, 1)
+    healthFill.Position = UDim2.fromScale(0, 1)
+    healthFill.Size = UDim2.fromScale(1, 1)
+    healthFill.BorderSizePixel = 0
+    healthFill.Parent = healthBack
+    corner(healthFill, 2)
+    bundle.HealthBack, bundle.HealthFill = healthBack, healthFill
     self.Bundles[player] = bundle
     return bundle
 end
@@ -92,38 +118,9 @@ end
 function Visuals:Remove(player)
     local bundle = self.Bundles[player]
     if not bundle then return end
-    removeDrawing(bundle.Box); removeDrawing(bundle.HealthBack); removeDrawing(bundle.HealthFill); removeDrawing(bundle.Tag)
     if bundle.Highlight then bundle.Highlight:Destroy() end
+    if bundle.Gui then bundle.Gui:Destroy() end
     self.Bundles[player] = nil
-end
-
-function Visuals:Hide(bundle)
-    for _, name in ipairs({"Box", "HealthBack", "HealthFill", "Tag"}) do
-        if bundle[name] then bundle[name].Visible = false end
-    end
-    if bundle.Highlight then bundle.Highlight.Enabled = false end
-end
-
-function Visuals:Bounds(character, camera)
-    local cf, size = character:GetBoundingBox()
-    local minX, minY = math.huge, math.huge
-    local maxX, maxY = -math.huge, -math.huge
-    local visible = false
-    for x = -1, 1, 2 do
-        for y = -1, 1, 2 do
-            for z = -1, 1, 2 do
-                local point = cf:PointToWorldSpace(Vector3.new(size.X * x, size.Y * y, size.Z * z) / 2)
-                local screen, onScreen = camera:WorldToViewportPoint(point)
-                if screen.Z > 0 then
-                    visible = visible or onScreen
-                    minX, minY = math.min(minX, screen.X), math.min(minY, screen.Y)
-                    maxX, maxY = math.max(maxX, screen.X), math.max(maxY, screen.Y)
-                end
-            end
-        end
-    end
-    if not visible then return nil end
-    return minX, minY, maxX, maxY
 end
 
 function Visuals:TagText(player, distance)
@@ -135,56 +132,37 @@ function Visuals:TagText(player, distance)
 end
 
 function Visuals:Step()
-    local camera = workspace.CurrentCamera
-    local localRoot = self.ctx.LocalPlayer.Character and self.ctx.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not camera then return end
+    local localCharacter = self.ctx.LocalPlayer.Character
+    local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
     for _, player in ipairs(self.ctx.Players:GetPlayers()) do
         if player ~= self.ctx.LocalPlayer then
-            local bundle = self:Bundle(player)
             local character = player.Character
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
             local root = character and character:FindFirstChild("HumanoidRootPart")
-            local bounds = character and humanoid and humanoid.Health > 0 and table.pack(self:Bounds(character, camera)) or nil
-            if not bounds or bounds.n == 0 or not bounds[1] then
-                self:Hide(bundle)
+            local bundle = self.Bundles[player]
+            if bundle and bundle.Character ~= character then self:Remove(player); bundle = nil end
+            if not character or not humanoid or humanoid.Health <= 0 or not root then
+                if bundle then bundle.Gui.Enabled = false; bundle.Highlight.Enabled = false end
             else
-                local minX, minY, maxX, maxY = bounds[1], bounds[2], bounds[3], bounds[4]
+                bundle = bundle or self:CreateBundle(player, character, root)
                 local color = self.ctx.Friends:IsFriend(player) and GREEN or WHITE
-                if bundle.Box then
-                    bundle.Box.Visible = self.ESP
-                    bundle.Box.Position = Vector2.new(minX, minY)
-                    bundle.Box.Size = Vector2.new(maxX - minX, maxY - minY)
-                    bundle.Box.Color = color
-                end
                 local healthRatio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
-                if bundle.HealthBack and bundle.HealthFill then
-                    bundle.HealthBack.Visible, bundle.HealthFill.Visible = self.Health, self.Health
-                    bundle.HealthBack.Position = Vector2.new(minX - 7, minY)
-                    bundle.HealthBack.Size = Vector2.new(4, maxY - minY)
-                    local height = (maxY - minY) * healthRatio
-                    bundle.HealthFill.Position = Vector2.new(minX - 6, maxY - height + 1)
-                    bundle.HealthFill.Size = Vector2.new(2, math.max(0, height - 2))
-                    bundle.HealthFill.Color = Color3.fromRGB(255 * (1 - healthRatio), 255 * healthRatio, 40)
-                end
-                if bundle.Tag then
-                    local distance = localRoot and root and (localRoot.Position - root.Position).Magnitude or 0
-                    local text = self:TagText(player, distance)
-                    bundle.Tag.Visible = self.NameTags and text ~= ""
-                    bundle.Tag.Position = Vector2.new((minX + maxX) / 2, minY - 22)
-                    bundle.Tag.Text, bundle.Tag.Color = text, color
-                end
-                if not bundle.Highlight or bundle.Highlight.Parent ~= character then
-                    if bundle.Highlight then bundle.Highlight:Destroy() end
-                    local highlight = Instance.new("Highlight")
-                    highlight.Name = "BezNigativaChams"
-                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    highlight.OutlineTransparency = 1
-                    highlight.Parent = character
-                    bundle.Highlight = highlight
-                end
-                bundle.Highlight.Enabled = self.Chams
+                local distance = localRoot and (localRoot.Position - root.Position).Magnitude or 0
+                local tagText = self:TagText(player, distance)
+                bundle.Gui.Adornee = root
+                bundle.Gui.Enabled = self.ESP or self.Health or (self.NameTags and tagText ~= "")
+                bundle.Box.Visible = self.ESP
+                bundle.BoxStroke.Color = color
+                bundle.HealthBack.Visible = self.Health
+                bundle.HealthFill.Size = UDim2.fromScale(1, healthRatio)
+                bundle.HealthFill.BackgroundColor3 = Color3.fromRGB(255 * (1 - healthRatio), 255 * healthRatio, 40)
+                bundle.Tag.Visible = self.NameTags and tagText ~= ""
+                bundle.Tag.Text, bundle.Tag.TextColor3 = tagText, color
+                bundle.Highlight.Enabled = self.Chams or self.ESP
                 bundle.Highlight.FillColor = color
-                bundle.Highlight.FillTransparency = self.ChamsTransparency
+                bundle.Highlight.FillTransparency = self.Chams and self.ChamsTransparency or 1
+                bundle.Highlight.OutlineColor = color
+                bundle.Highlight.OutlineTransparency = self.ESP and 0 or (self.Chams and 0.35 or 1)
             end
         end
     end
@@ -201,8 +179,7 @@ function Visuals:GetConfig()
         esp = self.ESP, health = self.Health, nameTags = self.NameTags,
         showDisplay = self.ShowDisplay, showReal = self.ShowReal, showDistance = self.ShowDistance,
         chams = self.Chams, chamsTransparency = self.ChamsTransparency,
-        lighting = self.Lighting, lightR = self.LightR, lightG = self.LightG,
-        lightB = self.LightB, lightStrength = self.LightStrength,
+        lighting = self.Lighting, lightR = self.LightR, lightG = self.LightG, lightB = self.LightB, lightStrength = self.LightStrength,
     }
 end
 
@@ -221,8 +198,7 @@ function Visuals:ApplyConfig(data)
     self.DisplayControl.Set(self.ShowDisplay); self.RealControl.Set(self.ShowReal); self.DistanceControl.Set(self.ShowDistance)
     self.ChamsControl.Set(self.Chams); self.TransparencyControl.Set(self.ChamsTransparency * 100)
     self.LightingControl.Set(self.Lighting); self.RControl.Set(self.LightR); self.GControl.Set(self.LightG)
-    self.BControl.Set(self.LightB); self.StrengthControl.Set(self.LightStrength)
-    self:UpdateLighting()
+    self.BControl.Set(self.LightB); self.StrengthControl.Set(self.LightStrength); self:UpdateLighting()
 end
 
 function Visuals:Destroy()

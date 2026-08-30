@@ -8,7 +8,7 @@ local function corner(parent, radius)
 end
 
 function Window.new(player, coreGui, janitor)
-    local self = setmetatable({pages = {}, tabs = {}, janitor = janitor}, Window)
+    local self = setmetatable({pages = {}, tabs = {}, janitor = janitor, tabCounter = 0}, Window)
     local parent = player:WaitForChild("PlayerGui")
     if typeof(gethui) == "function" then
         local ok, result = pcall(gethui)
@@ -34,12 +34,26 @@ function Window.new(player, coreGui, janitor)
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.fromOffset(680, 450)
-    frame.Position = UDim2.new(0.5, -340, 0.5, -225)
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.Position = UDim2.fromScale(0.5, 0.5)
     frame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
     frame.BorderSizePixel = 0
     frame.Parent = gui
     corner(frame, 7)
     self.Frame = frame
+
+    local uiScale = Instance.new("UIScale")
+    uiScale.Parent = frame
+    self.Scale = uiScale
+    local function updateScale()
+        local camera = workspace.CurrentCamera
+        local viewport = camera and camera.ViewportSize or Vector2.new(700, 470)
+        uiScale.Scale = math.clamp(math.min((viewport.X - 20) / 680, (viewport.Y - 20) / 450), 0.45, 1)
+    end
+    updateScale()
+    if workspace.CurrentCamera then
+        janitor:Add(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale))
+    end
 
     local top = Instance.new("Frame")
     top.Size = UDim2.new(1, 0, 0, 38)
@@ -59,11 +73,13 @@ function Window.new(player, coreGui, janitor)
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = top
 
-    local sidebar = Instance.new("Frame")
+    local sidebar = Instance.new("ScrollingFrame")
     sidebar.Position = UDim2.fromOffset(0, 38)
     sidebar.Size = UDim2.new(0, 150, 1, -38)
     sidebar.BackgroundColor3 = Color3.fromRGB(26, 26, 26)
     sidebar.BorderSizePixel = 0
+    sidebar.ScrollBarThickness = 3
+    sidebar.CanvasSize = UDim2.fromOffset(0, 0)
     sidebar.Parent = frame
     self.Sidebar = sidebar
 
@@ -74,7 +90,11 @@ function Window.new(player, coreGui, janitor)
     tabLayout.Parent = sidebar
     local tabPadding = Instance.new("UIPadding")
     tabPadding.PaddingTop = UDim.new(0, 14)
+    tabPadding.PaddingBottom = UDim.new(0, 14)
     tabPadding.Parent = sidebar
+    janitor:Add(tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        sidebar.CanvasSize = UDim2.fromOffset(0, tabLayout.AbsoluteContentSize.Y + 28)
+    end))
 
     local content = Instance.new("Frame")
     content.Position = UDim2.fromOffset(150, 38)
@@ -134,7 +154,9 @@ function Window:AddPage(name, subtitle)
     tab.Text = name
     tab.TextColor3 = Color3.fromRGB(175, 175, 175)
     tab.TextSize = 14
-    tab.LayoutOrder = #self.tabs + 1
+    self.tabCounter += 1
+    local preferredOrder = {Combat = 1, Movement = 2, Visuals = 3, Friend = 4, Other = 5}
+    tab.LayoutOrder = preferredOrder[name] or (100 + self.tabCounter)
     tab.Parent = self.Sidebar
     corner(tab, 5)
 
@@ -150,6 +172,23 @@ function Window:ShowPage(name)
         tab.BackgroundColor3 = active and Color3.fromRGB(48, 48, 48) or Color3.fromRGB(32, 32, 32)
         tab.TextColor3 = active and Color3.fromRGB(245, 245, 245) or Color3.fromRGB(175, 175, 175)
     end
+end
+
+function Window:ReportError(name, message)
+    local page = self.pages[name] or self:AddPage(name, "Модуль не загрузился")
+    local notice = page:FindFirstChild("ModuleError") or Instance.new("TextLabel")
+    notice.Name = "ModuleError"
+    notice.Position = UDim2.fromOffset(18, 64)
+    notice.Size = UDim2.new(1, -36, 0, 90)
+    notice.BackgroundColor3 = Color3.fromRGB(75, 32, 32)
+    notice.BorderSizePixel = 0
+    notice.Font = Enum.Font.Code
+    notice.Text = "Ошибка модуля:\n" .. tostring(message)
+    notice.TextWrapped = true
+    notice.TextColor3 = Color3.fromRGB(255, 205, 205)
+    notice.TextSize = 12
+    notice.Parent = page
+    corner(notice, 5)
 end
 
 function Window:ModuleStack(page, y)

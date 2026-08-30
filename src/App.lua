@@ -8,12 +8,6 @@ function App.start(loadModule)
     local Janitor = loadModule("core/Janitor")
     local Config = loadModule("core/Config")
     local Window = loadModule("ui/Window")
-    local Friends = loadModule("features/Friends")
-    local Visuals = loadModule("features/Visuals")
-    local Movement = loadModule("features/Movement")
-    local Combat = loadModule("features/Combat")
-    local Other = loadModule("features/Other")
-
     local self = setmetatable({Destroyed = false}, App)
     self.Janitor = Janitor.new()
     self.Services = {
@@ -41,12 +35,36 @@ function App.start(loadModule)
     context.Touch = function() self.Config:Touch() end
     context.Unload = function() self:Destroy(true) end
 
-    self.Friends = Friends.new(context)
+    local function emptyFeature()
+        return {
+            IsFriend = function() return false end,
+            GetConfig = function() return {} end,
+            ApplyConfig = function() end,
+            Destroy = function() end,
+        }
+    end
+    local function createFeature(moduleName, pageName)
+        local loaded, class = pcall(loadModule, moduleName)
+        if not loaded then
+            warn("[BezNigativa/" .. pageName .. "] download error: " .. tostring(class))
+            self.Window:ReportError(pageName, class)
+            return emptyFeature()
+        end
+        local created, feature = pcall(class.new, context)
+        if not created then
+            warn("[BezNigativa/" .. pageName .. "] startup error: " .. tostring(feature))
+            self.Window:ReportError(pageName, feature)
+            return emptyFeature()
+        end
+        return feature
+    end
+
+    self.Friends = createFeature("features/Friends", "Friend")
     context.Friends = self.Friends
-    self.Visuals = Visuals.new(context)
-    self.Movement = Movement.new(context)
-    self.Combat = Combat.new(context)
-    self.Other = Other.new(context)
+    self.Visuals = createFeature("features/Visuals", "Visuals")
+    self.Movement = createFeature("features/Movement", "Movement")
+    self.Combat = createFeature("features/Combat", "Combat")
+    self.Other = createFeature("features/Other", "Other")
 
     self.Config:SetProvider(function()
         return {

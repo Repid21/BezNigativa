@@ -1,11 +1,12 @@
 -- BezNigativa v7.0 injector entrypoint.
 local BASE_URL = "https://raw.githubusercontent.com/Repid21/BezNigativa/main/src/"
+local BUILD_QUERY = "?build=7.1"
 local cache = {}
 
 local function loadModule(name)
     if cache[name] ~= nil then return cache[name] end
 
-    local url = BASE_URL .. name .. ".lua"
+    local url = BASE_URL .. name .. ".lua" .. BUILD_QUERY
     local ok, source = pcall(function()
         return game:HttpGet(url)
     end)

@@ -99,7 +99,7 @@ function Movement:FlyObjects(root)
         local velocity = Instance.new("BodyVelocity")
         velocity.Name = "BezNigativaFlyVelocity"
         velocity.MaxForce = Vector3.new(1, 1, 1) * math.huge
-        velocity.Velocity = Vector3.zero
+        velocity.Velocity = Vector3.new(0, 0, 0)
         velocity.Parent = root
         local gyro = Instance.new("BodyGyro")
         gyro.Name = "BezNigativaFlyGyro"
@@ -126,14 +126,14 @@ function Movement:StepMovement()
     self:FlyObjects(root)
     humanoid.PlatformStand = false
     local input = self.ctx.UserInputService
-    local direction = Vector3.zero
+    local direction = Vector3.new(0, 0, 0)
     if input:IsKeyDown(Enum.KeyCode.W) then direction += camera.CFrame.LookVector end
     if input:IsKeyDown(Enum.KeyCode.S) then direction -= camera.CFrame.LookVector end
     if input:IsKeyDown(Enum.KeyCode.D) then direction += camera.CFrame.RightVector end
     if input:IsKeyDown(Enum.KeyCode.A) then direction -= camera.CFrame.RightVector end
-    if input:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
-    if input:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
-    self.FlyVelocity.Velocity = direction.Magnitude > 0 and direction.Unit * self.FlySpeed or Vector3.zero
+    if input:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.new(0, 1, 0) end
+    if input:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.new(0, 1, 0) end
+    self.FlyVelocity.Velocity = direction.Magnitude > 0 and direction.Unit * self.FlySpeed or Vector3.new(0, 0, 0)
     self.FlyGyro.CFrame = CFrame.lookAt(root.Position, root.Position + camera.CFrame.LookVector)
 end
 
