@@ -33,7 +33,9 @@ function MurderMystery2.new(ctx)
         GunESP = false,
         AutoFarm = false,
         Elapsed = 0,
-        FarmElapsed = 0,
+        FarmBagElapsed = 0,
+        FarmSpeed = 42,
+        FarmCollision = setmetatable({}, {__mode = "k"}),
         LastShot = 0,
         TouchedCoins = setmetatable({}, {__mode = "k"}),
     }, MurderMystery2)
@@ -48,6 +50,7 @@ function MurderMystery2.new(ctx)
     self.RoleChamsControl = ctx.Window:Toggle(roles.Settings, UDim2.fromOffset(10, 4), 260, "Маньяк и шериф", false, function(value)
         self.RoleChamsEnabled = value
         if not value then self.RoleChams:Clear() end
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
     self:AddHint(roles.Settings, "Маньяк — красный, игрок с Gun — синий.")
@@ -59,17 +62,18 @@ function MurderMystery2.new(ctx)
 
     local shoot = stack:Add("Auto Shoot", 126)
     self.AutoShootControl = ctx.Window:Toggle(shoot.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
-        self.AutoShoot = value; ctx.Touch()
+        self.AutoShoot = value; self:RefreshHeartbeat(); ctx.Touch()
     end)
     self:AddHint(shoot.Settings, "Стреляет, только если луч первым попал в видимую часть маньяка.")
 
     local gun = stack:Add("Dropped Gun", 132)
     self.AutoGunControl = ctx.Window:Toggle(gun.Settings, UDim2.fromOffset(10, 4), 220, "Auto Pickup", false, function(value)
-        self.AutoGun = value; ctx.Touch()
+        self.AutoGun = value; self:RefreshHeartbeat(); ctx.Touch()
     end)
     self.GunESPControl = ctx.Window:Toggle(gun.Settings, UDim2.fromOffset(240, 4), 220, "Gun ESP", false, function(value)
         self.GunESP = value
         if not value then self:ClearGunVisual() end
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
 
@@ -77,13 +81,25 @@ function MurderMystery2.new(ctx)
     self.AutoFarmControl = ctx.Window:Toggle(farm.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
         self:SetAutoFarm(value); ctx.Touch()
     end)
-    self:AddHint(farm.Settings, "Быстро собирает снизу; при полном мешке возвращает на spawn.")
+    self:AddHint(farm.Settings, "Летает под картой; при полном мешке возвращает на spawn.")
 
-    ctx.Janitor:Add(ctx.RunService.Heartbeat:Connect(function(delta)
-        local ok, message = pcall(function() self:Heartbeat(delta) end)
-        if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/MM2] " .. tostring(message)) end
-    end))
+    ctx.Janitor:Add(function()
+        if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
+    end)
     return self
+end
+
+function MurderMystery2:RefreshHeartbeat()
+    local active = self.RoleChamsEnabled or self.AutoShoot or self.AutoGun or self.GunESP or self.AutoFarm
+    if active and not self.HeartbeatLoop then
+        self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+            local ok, message = pcall(function() self:Heartbeat(delta) end)
+            if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/MM2] " .. tostring(message)) end
+        end)
+    elseif not active and self.HeartbeatLoop then
+        self.HeartbeatLoop:Disconnect()
+        self.HeartbeatLoop = nil
+    end
 end
 
 function MurderMystery2:AddHint(parent, text)
@@ -133,10 +149,7 @@ function MurderMystery2:ScanRoles()
 end
 
 function MurderMystery2:FindGunDrop()
-    for _, item in ipairs(self.ctx.Workspace:GetDescendants()) do
-        if item.Name == "GunDrop" or item.Name == "DroppedGun" then return item end
-    end
-    return nil
+    return self.ctx.Workspace:FindFirstChild("GunDrop", true) or self.ctx.Workspace:FindFirstChild("DroppedGun", true)
 end
 
 function MurderMystery2:ClearGunVisual()
@@ -175,24 +188,21 @@ function MurderMystery2:UpdateGunVisual(gunDrop)
 end
 
 function MurderMystery2:PickupGun(gunDrop)
-    if self.PickingGun or self.AutoFarm or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) then return end
+    if self.AutoFarm or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) or os.clock() - (self.LastPickupAttempt or 0) < 0.25 then return end
     local part = basePart(gunDrop)
     local character = self.ctx.LocalPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not part or not root then return end
-    self.PickingGun = true
-    task.spawn(function()
+    self.LastPickupAttempt = os.clock()
+    if type(firetouchinterest) == "function" then
         pcall(function()
-            local previous = character:GetPivot()
-            character:PivotTo(part.CFrame * CFrame.new(0, 1.5, 0))
-            if type(firetouchinterest) == "function" then
-                firetouchinterest(root, part, 0); firetouchinterest(root, part, 1)
-            end
-            task.wait(0.15)
-            if character.Parent and root.Parent then character:PivotTo(previous) end
+            firetouchinterest(root, part, 0)
+            firetouchinterest(root, part, 1)
         end)
-        self.PickingGun = false
-    end)
+    elseif not self.TouchWarning then
+        self.TouchWarning = true
+        warn("[BezNigativa/MM2] Auto Pickup requires firetouchinterest; teleport fallback is intentionally disabled")
+    end
 end
 
 function MurderMystery2:VisibleBodyPoint(target)
@@ -254,9 +264,16 @@ function MurderMystery2:TryAutoShoot()
 end
 
 function MurderMystery2:FindMap()
-    for _, item in ipairs(self.ctx.Workspace:GetChildren()) do
-        if item:IsA("Model") and item.Name ~= "Lobby" and item:FindFirstChild("CoinContainer", true) then return item end
+    if self.MapCache and self.MapCache.Parent and self.MapCache:FindFirstChild("CoinContainer", true) then
+        return self.MapCache
     end
+    for _, item in ipairs(self.ctx.Workspace:GetChildren()) do
+        if item:IsA("Model") and item.Name ~= "Lobby" and item:FindFirstChild("CoinContainer", true) then
+            self.MapCache = item
+            return item
+        end
+    end
+    self.MapCache = nil
     return nil
 end
 
@@ -282,7 +299,11 @@ end
 
 function MurderMystery2:FindNearestCoin(root)
     local map = self:FindMap()
-    local container = map and map:FindFirstChild("CoinContainer", true)
+    local container = self.CoinContainer
+    if not container or not container.Parent or not map or not container:IsDescendantOf(map) then
+        container = map and map:FindFirstChild("CoinContainer", true)
+        self.CoinContainer = container
+    end
     if not container then return nil end
     local nearest, nearestDistance = nil, math.huge
     local now = os.clock()
@@ -314,42 +335,153 @@ end
 function MurderMystery2:SetAutoFarm(value)
     self.AutoFarm = value
     self.BagHandled = false
-    local character = self.ctx.LocalPlayer.Character
-    if value then self.FarmStartPivot = character and character:GetPivot() or nil
-    elseif character and self.FarmStartPivot then pcall(function() character:PivotTo(self.FarmStartPivot) end) end
+    self.FarmBagElapsed = 0
+    self.FarmBagFull = false
+    self.FarmTarget = nil
+    self.FarmUnderground = false
+    if value then
+        self.FarmStopToken = (self.FarmStopToken or 0) + 1
+    else
+        self:StopFarmMotion(true)
+    end
+    self:RefreshHeartbeat()
 end
 
-function MurderMystery2:FarmStep()
-    if not self.AutoFarm or self.PickingGun then return end
-    if self:IsBagFull() then
-        if not self.BagHandled then self.BagHandled = true; self:TeleportToSpawn() end
+function MurderMystery2:SetFarmCollision(character, enabled)
+    if not character then return end
+    if enabled then
+        for part, original in pairs(self.FarmCollision) do
+            if part and part.Parent then part.CanCollide = original end
+            self.FarmCollision[part] = nil
+        end
+        return
+    end
+
+    for _, item in ipairs(character:GetDescendants()) do
+        if item:IsA("BasePart") then
+            if self.FarmCollision[item] == nil then self.FarmCollision[item] = item.CanCollide end
+            item.CanCollide = false
+        end
+    end
+end
+
+function MurderMystery2:EnsureFarmVelocity(root, character)
+    if self.FarmVelocity and self.FarmVelocity.Parent == root then return self.FarmVelocity end
+    if self.FarmVelocity then self.FarmVelocity:Destroy() end
+    if self.FarmCharacter and self.FarmCharacter ~= character then self:SetFarmCollision(self.FarmCharacter, true) end
+    if self.FarmCharacter ~= character then self.FarmUnderground = false end
+    self.FarmCharacter = character
+    self:SetFarmCollision(character, false)
+    local velocity = Instance.new("BodyVelocity")
+    velocity.Name = "BezNigativaCoinFlight"
+    velocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+    velocity.P = 1500
+    velocity.Velocity = Vector3.new(0, 0, 0)
+    velocity.Parent = root
+    self.FarmVelocity = velocity
+    return velocity
+end
+
+function MurderMystery2:StopFarmMotion(liftToSurface)
+    self.FarmTarget = nil
+    self.FarmUnderground = false
+    local velocity = self.FarmVelocity
+    self.FarmVelocity = nil
+    local character = self.FarmCharacter or self.ctx.LocalPlayer.Character
+    self.FarmCharacter = nil
+    local token = (self.FarmStopToken or 0) + 1
+    self.FarmStopToken = token
+
+    if liftToSurface and velocity and velocity.Parent then
+        velocity.Velocity = Vector3.new(0, 55, 0)
+        task.delay(0.35, function()
+            if self.FarmStopToken ~= token then
+                if velocity.Parent then velocity:Destroy() end
+                return
+            end
+            if velocity.Parent then velocity:Destroy() end
+            self:SetFarmCollision(character, true)
+        end)
+    else
+        if velocity and velocity.Parent then velocity:Destroy() end
+        self:SetFarmCollision(character, true)
+    end
+end
+
+function MurderMystery2:FarmStep(delta)
+    if not self.AutoFarm then return end
+    self.FarmBagElapsed += delta
+    if self.FarmBagElapsed >= 0.25 then
+        self.FarmBagElapsed = 0
+        self.FarmBagFull = self:IsBagFull()
+    end
+    if self.FarmBagFull then
+        if not self.BagHandled then
+            self.BagHandled = true
+            self:StopFarmMotion(false)
+            self:TeleportToSpawn()
+        end
         return
     end
     self.BagHandled = false
     local character = self.ctx.LocalPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    local coin = root and self:FindNearestCoin(root)
-    if not character or not root or not coin then return end
-    character:PivotTo(coin.CFrame * CFrame.new(0, -1.35, 0))
-    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not character or not root or not humanoid or humanoid.Health <= 0 then return end
+
+    local velocity = self:EnsureFarmVelocity(root, character)
+    local coin = self.FarmTarget
+    if not coin or not coin.Parent or not coin:IsA("BasePart") or not coin:FindFirstChildWhichIsA("TouchTransmitter") then
+        coin = self:FindNearestCoin(root)
+        self.FarmTarget = coin
+    end
+    if not coin then
+        velocity.Velocity = Vector3.new(0, 0, 0)
+        return
+    end
+
+    local destination = coin.Position - Vector3.new(0, 5.5, 0)
+    if not self.FarmUnderground then
+        local vertical = destination.Y - root.Position.Y
+        if math.abs(vertical) > 1.5 then
+            velocity.Velocity = Vector3.new(0, math.sign(vertical) * self.FarmSpeed, 0)
+            return
+        end
+        self.FarmUnderground = true
+    end
+    local offset = destination - root.Position
+    local distance = offset.Magnitude
+    if distance > 3.4 then
+        velocity.Velocity = offset.Unit * self.FarmSpeed
+        return
+    end
+
+    velocity.Velocity = Vector3.new(0, 0, 0)
     if type(firetouchinterest) == "function" then
-        firetouchinterest(root, coin, 0); firetouchinterest(root, coin, 1)
+        pcall(function()
+            firetouchinterest(root, coin, 0)
+            firetouchinterest(root, coin, 1)
+        end)
     end
     self.TouchedCoins[coin] = os.clock()
+    self.FarmTarget = nil
 end
 
 function MurderMystery2:Heartbeat(delta)
+    local regularActive = self.RoleChamsEnabled or self.AutoShoot or self.AutoGun or self.GunESP
+    if not regularActive and not self.AutoFarm then return end
     self.Elapsed += delta
-    self.FarmElapsed += delta
-    if self.Elapsed >= 0.12 then
+    if regularActive and self.Elapsed >= 0.12 then
         self.Elapsed = 0
-        self:ScanRoles()
-        local gunDrop = self:FindGunDrop()
-        self:UpdateGunVisual(gunDrop)
-        if self.AutoGun and gunDrop then self:PickupGun(gunDrop) end
-        self:TryAutoShoot()
+        if self.RoleChamsEnabled then self:ScanRoles() end
+        if self.AutoGun or self.GunESP then
+            local gunDrop = self:FindGunDrop()
+            if self.GunESP then self:UpdateGunVisual(gunDrop) end
+            if self.AutoGun and gunDrop then self:PickupGun(gunDrop) end
+        end
+        if self.AutoShoot then self:TryAutoShoot() end
     end
-    if self.FarmElapsed >= 0.07 then self.FarmElapsed = 0; self:FarmStep() end
+    if self.AutoFarm then self:FarmStep(delta) end
 end
 
 function MurderMystery2:GetConfig()
@@ -379,8 +511,11 @@ function MurderMystery2:ApplyConfig(data)
 end
 
 function MurderMystery2:Destroy()
-    if self.AutoFarm then self:SetAutoFarm(false) end
+    self.AutoFarm = false
+    self:StopFarmMotion(false)
     self.AutoShoot, self.AutoGun, self.AutoFarm = false, false, false
+    self.RoleChamsEnabled, self.GunESP = false, false
+    self:RefreshHeartbeat()
     self.RoleChams:Clear(); self:ClearGunVisual()
 end
 

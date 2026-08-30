@@ -35,7 +35,7 @@ function Combat.new(ctx)
     local stack = ctx.Window:ModuleStack(page, 70)
     local module = stack:Add("AimBot", 342)
     self.EnabledControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(10, 4), 160, "Enabled", false, function(value)
-        self.Enabled = value; self.Target = nil; ctx.Touch()
+        self.Enabled = value; self.Target = nil; self:RefreshRenderBinding(); ctx.Touch()
     end)
     self.WallControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(180, 4), 160, "Wall Check", true, function(value)
         self.WallCheck = value; self.Target = nil; ctx.Touch()
@@ -85,7 +85,7 @@ function Combat.new(ctx)
     fovCircle.Active = false
     fovCircle.Visible = false
     fovCircle.ZIndex = 0
-    fovCircle.Parent = ctx.Window.Gui
+    fovCircle.Parent = ctx.Window.OverlayGui or ctx.Window.Gui
     local circleCorner = Instance.new("UICorner")
     circleCorner.CornerRadius = UDim.new(1, 0)
     circleCorner.Parent = fovCircle
@@ -116,10 +116,23 @@ function Combat.new(ctx)
         if self.Mode == "Hold" and inputName(input) == self.Bind then self.Held = false; self.Target = nil end
     end))
 
-    local renderName = "BezNigativaAimBot"
-    ctx.RunService:BindToRenderStep(renderName, Enum.RenderPriority.Camera.Value + 1, function() self:Step() end)
-    ctx.Janitor:Add(function() ctx.RunService:UnbindFromRenderStep(renderName) end)
+    self.RenderName = "BezNigativaAimBot"
+    ctx.Janitor:Add(function()
+        if self.RenderBound then ctx.RunService:UnbindFromRenderStep(self.RenderName) end
+        self.RenderBound = false
+    end)
     return self
+end
+
+function Combat:RefreshRenderBinding()
+    if self.Enabled and not self.RenderBound then
+        self.ctx.RunService:BindToRenderStep(self.RenderName, Enum.RenderPriority.Camera.Value + 1, function() self:Step() end)
+        self.RenderBound = true
+    elseif not self.Enabled and self.RenderBound then
+        self.ctx.RunService:UnbindFromRenderStep(self.RenderName)
+        self.RenderBound = false
+        if self.FovCircle then self.FovCircle.Visible = false end
+    end
 end
 
 function Combat:DrawBind()
@@ -174,11 +187,19 @@ function Combat:SelectTarget()
 end
 
 function Combat:Step()
-    local mouse = self.ctx.UserInputService:GetMouseLocation()
+    if not self.Enabled then
+        if self.FovCircle and self.FovCircle.Visible then self.FovCircle.Visible = false end
+        self.Target = nil
+        return
+    end
+
     if self.FovCircle then
-        self.FovCircle.Visible = self.Enabled and self.ShowFov
-        self.FovCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
-        self.FovCircle.Size = UDim2.fromOffset(self.Fov * 2, self.Fov * 2)
+        self.FovCircle.Visible = self.ShowFov
+        if self.ShowFov then
+            local mouse = self.ctx.UserInputService:GetMouseLocation()
+            self.FovCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+            self.FovCircle.Size = UDim2.fromOffset(self.Fov * 2, self.Fov * 2)
+        end
     end
     if not self:IsActive() then self.Target = nil; return end
     local camera = workspace.CurrentCamera
@@ -216,6 +237,7 @@ function Combat:ApplyConfig(data)
     self.PartControl.Text = "Part: " .. (self.AimPart == "Head" and "Head" or "Body")
     self.ModeControl.Text = "Mode: " .. self.Mode
     self:DrawBind()
+    self:RefreshRenderBinding()
 end
 
 return Combat

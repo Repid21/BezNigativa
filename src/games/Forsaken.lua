@@ -13,6 +13,7 @@ function Forsaken.new(ctx)
     self.EnabledControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(10, 4), 220, "Красный маньяк", false, function(value)
         self.Enabled = value
         if not value then self.Chams:Clear() end
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
     local hint = Instance.new("TextLabel")
@@ -27,14 +28,25 @@ function Forsaken.new(ctx)
     hint.TextXAlignment = Enum.TextXAlignment.Left
     hint.Parent = module.Settings
 
-    ctx.Janitor:Add(ctx.RunService.Heartbeat:Connect(function(delta)
-        self.Elapsed += delta
-        if self.Elapsed < 0.15 then return end
-        self.Elapsed = 0
-        local ok, message = pcall(function() self:Scan() end)
-        if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Forsaken] " .. tostring(message)) end
-    end))
+    ctx.Janitor:Add(function()
+        if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
+    end)
     return self
+end
+
+function Forsaken:RefreshHeartbeat()
+    if self.Enabled and not self.HeartbeatLoop then
+        self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+            self.Elapsed += delta
+            if self.Elapsed < 0.15 then return end
+            self.Elapsed = 0
+            local ok, message = pcall(function() self:Scan() end)
+            if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Forsaken] " .. tostring(message)) end
+        end)
+    elseif not self.Enabled and self.HeartbeatLoop then
+        self.HeartbeatLoop:Disconnect()
+        self.HeartbeatLoop = nil
+    end
 end
 
 function Forsaken:RoleFolders()
@@ -73,9 +85,12 @@ function Forsaken:ApplyConfig(data)
     self.Enabled = type(data) == "table" and data.enabled == true
     self.EnabledControl.Set(self.Enabled)
     if not self.Enabled then self.Chams:Clear() end
+    self:RefreshHeartbeat()
 end
 
 function Forsaken:Destroy()
+    self.Enabled = false
+    self:RefreshHeartbeat()
     self.Chams:Clear()
 end
 

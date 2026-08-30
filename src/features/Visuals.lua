@@ -39,17 +39,17 @@ function Visuals.new(ctx)
     local page = ctx.Window:AddPage("Visuals", "ESP, NameTags, Chams и освещение")
     local stack = ctx.Window:ModuleStack(page, 70)
     local esp = stack:Add("ESP", 88)
-    self.ESPControl = ctx.Window:Toggle(esp.Settings, UDim2.fromOffset(10, 4), 180, "Box", false, function(v) self.ESP = v; ctx.Touch() end)
-    self.HealthControl = ctx.Window:Toggle(esp.Settings, UDim2.fromOffset(200, 4), 180, "Health Bar", false, function(v) self.Health = v; ctx.Touch() end)
+    self.ESPControl = ctx.Window:Toggle(esp.Settings, UDim2.fromOffset(10, 4), 180, "Box", false, function(v) self.ESP = v; self:RefreshRenderLoop(); ctx.Touch() end)
+    self.HealthControl = ctx.Window:Toggle(esp.Settings, UDim2.fromOffset(200, 4), 180, "Health Bar", false, function(v) self.Health = v; self:RefreshRenderLoop(); ctx.Touch() end)
 
     local tags = stack:Add("NameTags", 138)
-    self.TagsControl = ctx.Window:Toggle(tags.Settings, UDim2.fromOffset(10, 4), 155, "Enabled", false, function(v) self.NameTags = v; ctx.Touch() end)
+    self.TagsControl = ctx.Window:Toggle(tags.Settings, UDim2.fromOffset(10, 4), 155, "Enabled", false, function(v) self.NameTags = v; self:RefreshRenderLoop(); ctx.Touch() end)
     self.DisplayControl = ctx.Window:Toggle(tags.Settings, UDim2.fromOffset(175, 4), 155, "Display name", true, function(v) self.ShowDisplay = v; ctx.Touch() end)
     self.RealControl = ctx.Window:Toggle(tags.Settings, UDim2.fromOffset(340, 4), 155, "Real name", false, function(v) self.ShowReal = v; ctx.Touch() end)
     self.DistanceControl = ctx.Window:Toggle(tags.Settings, UDim2.fromOffset(10, 48), 155, "Meters", true, function(v) self.ShowDistance = v; ctx.Touch() end)
 
     local chams = stack:Add("Chams", 132)
-    self.ChamsControl = ctx.Window:Toggle(chams.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Chams = v; ctx.Touch() end)
+    self.ChamsControl = ctx.Window:Toggle(chams.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Chams = v; self:RefreshRenderLoop(); ctx.Touch() end)
     self.TransparencyControl = ctx.Window:Slider(chams.Settings, 48, "Transparency", 35, 0, 100, 1, function(v) self.ChamsTransparency = v / 100; ctx.Touch() end)
 
     local lighting = stack:Add("Lighting", 252)
@@ -67,18 +67,42 @@ function Visuals.new(ctx)
     self.Effect = effect
 
     ctx.Janitor:Add(ctx.Players.PlayerRemoving:Connect(function(player) self:Remove(player) end))
-    ctx.Janitor:Add(ctx.RunService.RenderStepped:Connect(function()
+    ctx.Janitor:Add(function()
+        if self.RenderLoop then self.RenderLoop:Disconnect(); self.RenderLoop = nil end
+    end)
+    return self
+end
+
+function Visuals:RefreshRenderLoop()
+    local active = self.ESP or self.Health or self.NameTags or self.Chams
+    if not active then
+        if self.RenderLoop then self.RenderLoop:Disconnect(); self.RenderLoop = nil end
+        if next(self.Bundles) then self:ResetBundles() end
+        return
+    end
+    if self.RenderLoop then return end
+    self.RenderElapsed = 0
+    self.RenderLoop = self.ctx.RunService.RenderStepped:Connect(function(delta)
+        local screenVisuals = self.ESP or self.Health or self.NameTags
+        local hasPlayerVisuals = screenVisuals or self.Chams
+        if not hasPlayerVisuals then
+            if next(self.Bundles) then self:ResetBundles() end
+            return
+        end
+        self.RenderElapsed = (self.RenderElapsed or 0) + delta
+        local interval = screenVisuals and (1 / 30) or 0.15
+        if self.RenderElapsed < interval then return end
+        self.RenderElapsed = 0
         local ok, message = pcall(function() self:Step() end)
         if not ok then
             drawingSupported = false
             self:ResetBundles()
             if not self.Warned then self.Warned = true; warn("[BezNigativa/Visuals] " .. tostring(message)) end
         end
-    end))
-    return self
+    end)
 end
 
-function Visuals:CreateBundle(player, character, root)
+function Visuals:CreateBundle(player, character, root, createScreenObjects)
     local bundle = {Character = character}
     local highlight = Instance.new("Highlight")
     highlight.Name = "BezNigativaVisual"
@@ -86,6 +110,10 @@ function Visuals:CreateBundle(player, character, root)
     highlight.Enabled = false
     highlight.Parent = character
     bundle.Highlight = highlight
+    if not createScreenObjects then
+        self.Bundles[player] = bundle
+        return bundle
+    end
     bundle.Box = newDrawing("Square")
     bundle.HealthBack = bundle.Box and newDrawing("Square") or nil
     bundle.HealthFill = bundle.Box and newDrawing("Square") or nil
@@ -196,6 +224,11 @@ function Visuals:TagText(player, distance)
 end
 
 function Visuals:Step()
+    local screenVisuals = self.ESP or self.Health or self.NameTags
+    if not screenVisuals and not self.Chams then
+        if next(self.Bundles) then self:ResetBundles() end
+        return
+    end
     local camera = self.ctx.Workspace.CurrentCamera
     if not camera then return end
     local localCharacter = self.ctx.LocalPlayer.Character
@@ -209,6 +242,7 @@ function Visuals:Step()
             if bundle and (bundle.Character ~= character or not bundle.Highlight or not bundle.Highlight.Parent or (bundle.Gui and not bundle.Gui.Parent)) then
                 self:Remove(player); bundle = nil
             end
+            if bundle and screenVisuals and not bundle.Box and not bundle.Gui then self:Remove(player); bundle = nil end
             if not character or not humanoid or humanoid.Health <= 0 or not root then
                 if bundle then
                     if bundle.Gui then bundle.Gui.Enabled = false end
@@ -216,12 +250,12 @@ function Visuals:Step()
                     self:HideDrawing(bundle)
                 end
             else
-                bundle = bundle or self:CreateBundle(player, character, root)
+                bundle = bundle or self:CreateBundle(player, character, root, screenVisuals)
                 local color = self.ctx.Friends:IsFriend(player) and GREEN or WHITE
-                local healthRatio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
-                local distance = localRoot and (localRoot.Position - root.Position).Magnitude or 0
-                local tagText = self:TagText(player, distance)
-                if bundle.Box then
+                local healthRatio = screenVisuals and math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1) or 0
+                local distance = screenVisuals and localRoot and (localRoot.Position - root.Position).Magnitude or 0
+                local tagText = screenVisuals and self:TagText(player, distance) or ""
+                if screenVisuals and bundle.Box then
                     local minX, minY, maxX, maxY = self:Bounds(character, camera)
                     if minX then
                         bundle.Box.Visible = self.ESP
@@ -241,7 +275,7 @@ function Visuals:Step()
                     else
                         self:HideDrawing(bundle)
                     end
-                else
+                elseif screenVisuals and bundle.Gui then
                     bundle.Gui.Adornee = root
                     bundle.Gui.Enabled = self.Health or (self.NameTags and tagText ~= "")
                     bundle.GuiTag.Visible = self.NameTags and tagText ~= ""
@@ -249,6 +283,9 @@ function Visuals:Step()
                     bundle.GuiHealthBack.Visible = self.Health
                     bundle.GuiHealthFill.Size = UDim2.fromScale(healthRatio, 1)
                     bundle.GuiHealthFill.BackgroundColor3 = Color3.fromRGB(255 * (1 - healthRatio), 255 * healthRatio, 40)
+                else
+                    if bundle.Gui then bundle.Gui.Enabled = false end
+                    self:HideDrawing(bundle)
                 end
                 bundle.Highlight.Enabled = self.Chams or (self.ESP and not bundle.Box)
                 bundle.Highlight.FillColor = color
@@ -292,9 +329,11 @@ function Visuals:ApplyConfig(data)
     self.ChamsControl.Set(self.Chams); self.TransparencyControl.Set(self.ChamsTransparency * 100)
     self.LightingControl.Set(self.Lighting); self.RControl.Set(self.LightR); self.GControl.Set(self.LightG)
     self.BControl.Set(self.LightB); self.StrengthControl.Set(self.LightStrength); self:UpdateLighting()
+    self:RefreshRenderLoop()
 end
 
 function Visuals:Destroy()
+    if self.RenderLoop then self.RenderLoop:Disconnect(); self.RenderLoop = nil end
     self:ResetBundles()
 end
 

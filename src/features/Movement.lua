@@ -23,6 +23,7 @@ function Movement.new(ctx)
     self.SpeedControl = ctx.Window:Toggle(speed.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
         self.Speed = v
         if v then self:ApplyHumanoid() else self:RestoreSpeed() end
+        self:RefreshLoops()
         ctx.Touch()
     end)
     self.SpeedValueControl = ctx.Window:Slider(speed.Settings, 48, "Strength", 24, 0, 200, 1, function(v) self.SpeedValue = v; self:ApplyHumanoid(); ctx.Touch() end)
@@ -31,6 +32,7 @@ function Movement.new(ctx)
     self.JumpControl = ctx.Window:Toggle(jump.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
         self.Jump = v
         if v then self:ApplyHumanoid() else self:RestoreJump() end
+        self:RefreshLoops()
         ctx.Touch()
     end)
     self.JumpValueControl = ctx.Window:Slider(jump.Settings, 48, "Strength", 80, 25, 250, 1, function(v) self.JumpValue = v; self:ApplyHumanoid(); ctx.Touch() end)
@@ -39,6 +41,7 @@ function Movement.new(ctx)
     self.NoclipControl = ctx.Window:Toggle(noclip.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
         self.Noclip = v
         if not v then self:RestoreCollision() end
+        self:RefreshLoops()
         ctx.Touch()
     end)
 
@@ -46,6 +49,7 @@ function Movement.new(ctx)
     self.FlyControl = ctx.Window:Toggle(fly.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
         self.Fly = v
         if not v then self:StopFly() end
+        self:RefreshLoops()
         ctx.Touch()
     end)
     self.FlyValueControl = ctx.Window:Slider(fly.Settings, 48, "Strength", 55, 10, 250, 1, function(v) self.FlySpeed = v; ctx.Touch() end)
@@ -60,13 +64,32 @@ function Movement.new(ctx)
         self:DisconnectHumanoid()
         task.defer(function() self:WatchHumanoid(); self:ApplyHumanoid() end)
     end))
-    ctx.Janitor:Add(ctx.RunService.Stepped:Connect(function() self:StepNoclip() end))
-    ctx.Janitor:Add(ctx.RunService.Heartbeat:Connect(function()
-        local ok, message = pcall(function() self:StepMovement() end)
-        if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Movement] " .. tostring(message)) end
-    end))
+    ctx.Janitor:Add(function() self:DisconnectLoops() end)
     self:WatchHumanoid()
     return self
+end
+
+function Movement:DisconnectLoops()
+    if self.NoclipLoop then self.NoclipLoop:Disconnect(); self.NoclipLoop = nil end
+    if self.MovementLoop then self.MovementLoop:Disconnect(); self.MovementLoop = nil end
+end
+
+function Movement:RefreshLoops()
+    if self.Noclip and not self.NoclipLoop then
+        self.NoclipLoop = self.ctx.RunService.Stepped:Connect(function() self:StepNoclip() end)
+    elseif not self.Noclip and self.NoclipLoop then
+        self.NoclipLoop:Disconnect(); self.NoclipLoop = nil
+    end
+
+    local active = self.Speed or self.Jump or self.Fly
+    if active and not self.MovementLoop then
+        self.MovementLoop = self.ctx.RunService.Heartbeat:Connect(function()
+            local ok, message = pcall(function() self:StepMovement() end)
+            if not ok and not self.Warned then self.Warned = true; warn("[BezNigativa/Movement] " .. tostring(message)) end
+        end)
+    elseif not active and self.MovementLoop then
+        self.MovementLoop:Disconnect(); self.MovementLoop = nil
+    end
 end
 
 function Movement:CharacterParts()
@@ -91,7 +114,7 @@ function Movement:WatchHumanoid()
     self.DefaultJumpPower = humanoid.JumpPower
     self.DefaultJumpHeight = humanoid.JumpHeight
     local function enforce()
-        if not self.ApplyingMovement then self:ApplyHumanoid() end
+        if (self.Speed or self.Jump) and not self.ApplyingMovement then self:ApplyHumanoid() end
     end
     for _, property in ipairs({"WalkSpeed", "JumpPower", "JumpHeight", "UseJumpPower"}) do
         local connection = humanoid:GetPropertyChangedSignal(property):Connect(enforce)
@@ -176,7 +199,7 @@ function Movement:StopFly()
 end
 
 function Movement:StepMovement()
-    self:ApplyHumanoid()
+    if self.Speed or self.Jump then self:ApplyHumanoid() end
     local _, humanoid, root = self:CharacterParts()
     if not self.Fly then return end
     local camera = workspace.CurrentCamera
@@ -279,6 +302,7 @@ function Movement:ApplyConfig(data)
     self.JumpControl.Set(self.Jump); self.JumpValueControl.Set(self.JumpValue)
     self.NoclipControl.Set(self.Noclip); self.FlyControl.Set(self.Fly); self.FlyValueControl.Set(self.FlySpeed)
     self:ApplyHumanoid()
+    self:RefreshLoops()
 end
 
 function Movement:Destroy()
@@ -286,6 +310,8 @@ function Movement:Destroy()
     self:StopFly()
     self:RestoreCollision()
     self.Speed, self.Jump = false, false
+    self.Noclip = false
+    self:DisconnectLoops()
     self:RestoreSpeed(); self:RestoreJump()
     self:DisconnectHumanoid()
 end

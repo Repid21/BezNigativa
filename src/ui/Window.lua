@@ -21,16 +21,28 @@ function Window.new(player, coreGui, janitor)
     for _, candidate in ipairs({parent, player:FindFirstChild("PlayerGui"), coreGui}) do
         local old = candidate and candidate:FindFirstChild("BezNigativaGUI")
         if old then old:Destroy() end
+        local oldOverlay = candidate and candidate:FindFirstChild("BezNigativaOverlay")
+        if oldOverlay then oldOverlay:Destroy() end
     end
 
     local gui = Instance.new("ScreenGui")
     gui.Name = "BezNigativaGUI"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
-    gui:SetAttribute("Build", "8.1-modular")
+    gui.DisplayOrder = 10
+    gui:SetAttribute("Build", "8.2-modular")
     gui.Parent = parent
     self.Gui = gui
     janitor:Add(gui)
+
+    local overlayGui = Instance.new("ScreenGui")
+    overlayGui.Name = "BezNigativaOverlay"
+    overlayGui.ResetOnSpawn = false
+    overlayGui.IgnoreGuiInset = true
+    overlayGui.DisplayOrder = 5
+    overlayGui.Parent = parent
+    self.OverlayGui = overlayGui
+    janitor:Add(overlayGui)
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.fromOffset(680, 450)
@@ -67,7 +79,7 @@ function Window.new(player, coreGui, janitor)
     title.Position = UDim2.fromOffset(12, 0)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.Text = "BezNigativa v8.1"
+    title.Text = "BezNigativa v8.2"
     title.TextColor3 = Color3.fromRGB(240, 240, 240)
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
