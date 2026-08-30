@@ -902,11 +902,11 @@ local function updateMovement()
 end
 
 -- COMBAT / CAMERA ASSIST
-pageTitle(CombatPage, "Combat", "AimBot test | first person")
+pageTitle(CombatPage, "Combat", "AimBot | camera modes supported")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
-local aimSpeed = 35
+local smoothValue = 4
 local wallCheckEnabled = true
 local aimGroups = {
     Head = true,
@@ -921,7 +921,7 @@ local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, func
 end)
 
 local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600, 5, function(v) fovRadius = v end)
-local getAimSpeed, setAimSpeed = createStepper(CombatPage, 172, "Aim speed", aimSpeed, 1, 100, 1, function(v) aimSpeed = v end)
+local getSmooth, setSmooth = createStepper(CombatPage, 172, "Smooth", smoothValue, 1, 100, 1, function(v) smoothValue = v end)
 
 local wallCheckToggle = createToggle(CombatPage, 222, 78, 190, "Wall Check", true, function(value)
     wallCheckEnabled = value
@@ -958,7 +958,7 @@ combatStatus.BackgroundTransparency = 1
 combatStatus.Position = UDim2.fromOffset(18, 340)
 combatStatus.Size = UDim2.new(1, -36, 0, 24)
 combatStatus.Font = Enum.Font.Code
-combatStatus.Text = "Enter first person to use AimBot"
+combatStatus.Text = "AimBot ready"
 combatStatus.TextColor3 = Color3.fromRGB(140, 140, 140)
 combatStatus.TextSize = 12
 combatStatus.TextXAlignment = Enum.TextXAlignment.Left
@@ -978,25 +978,6 @@ if fovCircle then
         removeDrawing(fovCircle)
         fovCircle = nil
     end
-end
-
-local function isFirstPerson()
-    if not Camera then return false end
-
-    if LocalPlayer.CameraMode == Enum.CameraMode.LockFirstPerson then
-        return true
-    end
-
-    local character = LocalPlayer.Character
-    local head = character and character:FindFirstChild("Head")
-    if head and head:IsA("BasePart") then
-        -- Some experiences apply a small first-person camera offset. The old
-        -- 1.5-stud limit rejected those cameras even though they were visibly
-        -- in first person.
-        return (Camera.CFrame.Position - head.Position).Magnitude < 3
-    end
-
-    return false
 end
 
 local function addPartCandidate(list, character, name)
@@ -1051,16 +1032,46 @@ end
 local function hasLineOfSight(targetCharacter, worldPosition)
     if not wallCheckEnabled or not Camera then return true end
 
-    local direction = worldPosition - Camera.CFrame.Position
-    if direction.Magnitude <= 0.01 then return true end
+    local ok, visible = pcall(function()
+        local origin = Camera.CFrame.Position
+        local direction = worldPosition - origin
+        if direction.Magnitude <= 0.01 then return true end
 
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
-    params.IgnoreWater = true
+        local ignored = {}
+        if LocalPlayer.Character then
+            table.insert(ignored, LocalPlayer.Character)
+        end
 
-    local hit = workspace:Raycast(Camera.CFrame.Position, direction, params)
-    return hit == nil or (hit.Instance and hit.Instance:IsDescendantOf(targetCharacter))
+        -- Raycast again through fully transparent helper parts. Many games put
+        -- invisible triggers or view-model geometry in front of the camera;
+        -- treating those as walls made AimBot reject every target.
+        for _ = 1, 12 do
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = ignored
+            params.IgnoreWater = true
+
+            local hit = workspace:Raycast(origin, direction, params)
+            if not hit then return true end
+
+            local instance = hit.Instance
+            if instance and instance:IsDescendantOf(targetCharacter) then
+                return true
+            end
+
+            if instance and instance:IsA("BasePart") and instance.Transparency >= 0.95 then
+                table.insert(ignored, instance)
+            else
+                return false
+            end
+        end
+
+        return true
+    end)
+
+    -- If an executor has an incomplete Raycast implementation, Wall Check
+    -- fails open instead of disabling all target acquisition.
+    return not ok or visible == true
 end
 
 local function getBestAimPoint()
@@ -1112,11 +1123,6 @@ local function updateCombat(deltaTime)
 
     if not cameraAssistEnabled then return end
 
-    if not isFirstPerson() then
-        combatStatus.Text = "Enter first person to use AimBot"
-        return
-    end
-
     local targetPosition = getBestAimPoint()
     if not targetPosition then
         combatStatus.Text = "No selected target inside FOV"
@@ -1126,9 +1132,17 @@ local function updateCombat(deltaTime)
     combatStatus.Text = "Tracking closest selected zone inside FOV"
     local desired = CFrame.lookAt(Camera.CFrame.Position, targetPosition)
     local dt = math.clamp(deltaTime or (1 / 60), 1 / 240, 1 / 15)
-    local responseRate = 2 + (aimSpeed * 0.45)
-    local alpha = 1 - math.exp(-responseRate * dt)
-    Camera.CFrame = Camera.CFrame:Lerp(desired, alpha)
+    local smooth = math.max(1, smoothValue)
+
+    if smooth <= 1 then
+        Camera.CFrame = desired
+    else
+        -- At 60 FPS Smooth 2 moves half of the remaining distance per frame,
+        -- Smooth 3 moves one third, and so on. The exponent keeps the same
+        -- feel at other frame rates.
+        local alpha = 1 - math.pow(1 - (1 / smooth), dt * 60)
+        Camera.CFrame = Camera.CFrame:Lerp(desired, math.clamp(alpha, 0, 1))
+    end
 end
 
 -- OTHER / CONFIG
@@ -1155,7 +1169,7 @@ configStatus.Parent = OtherPage
 
 local function buildConfig()
     return {
-        version = 1,
+        version = 2,
         visual = {esp = espEnabled, healthBar = healthBarEnabled},
         movement = {
             speedEnabled = speedEnabled,
@@ -1170,7 +1184,7 @@ local function buildConfig()
             enabled = cameraAssistEnabled,
             wallCheck = wallCheckEnabled,
             fov = fovRadius,
-            aimSpeed = aimSpeed,
+            smooth = smoothValue,
             aimGroups = aimGroups,
         },
     }
@@ -1209,7 +1223,14 @@ local function applyConfig(data)
     if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
 
     if type(combat.fov) == "number" then setFov(combat.fov) end
-    if type(combat.aimSpeed) == "number" then setAimSpeed(combat.aimSpeed) end
+    if type(combat.smooth) == "number" then
+        setSmooth(combat.smooth)
+    elseif type(combat.aimSpeed) == "number" then
+        -- Convert version 1's inverted Aim Speed into the new Smooth scale.
+        local oldSpeed = math.clamp(combat.aimSpeed, 1, 100)
+        local oldAlphaAt60Fps = 1 - math.exp(-(2 + oldSpeed * 0.45) / 60)
+        setSmooth(math.clamp(math.round(1 / math.max(oldAlphaAt60Fps, 0.01)), 1, 100))
+    end
     if type(combat.wallCheck) == "boolean" then wallCheckEnabled = combat.wallCheck; wallCheckToggle.Set(wallCheckEnabled) end
     if type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
 
@@ -1295,10 +1316,19 @@ local AIMBOT_RENDER_NAME = "BezNigativaAimBotCamera"
 -- its cleanup function. Last priority also wins over custom camera scripts that
 -- run later than Roblox's default CameraScript.
 pcall(function() RunService:UnbindFromRenderStep(AIMBOT_RENDER_NAME) end)
-RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Last.Value, function(deltaTime)
+local function aimRenderCallback(deltaTime)
     Camera = workspace.CurrentCamera or Camera
     runSafely("AimBot", updateCombat, deltaTime)
+end
+
+local aimBindOk = pcall(function()
+    RunService:BindToRenderStep(AIMBOT_RENDER_NAME, Enum.RenderPriority.Last.Value, aimRenderCallback)
 end)
+if not aimBindOk then
+    -- Compatibility fallback for environments that reject named render-step
+    -- bindings. This connection is also tracked by the normal cleanup path.
+    bind(RunService.RenderStepped:Connect(aimRenderCallback))
+end
 
 bind(RunService.Heartbeat:Connect(function()
     runSafely("Movement heartbeat", updateMovement)
