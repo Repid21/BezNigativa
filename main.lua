@@ -1,7 +1,7 @@
 -- BezNigativa | categorized Roblox ClickGUI
 -- RightShift toggles the menu.
 -- Visual ESP uses Drawing API when available.
--- Combat and Movement are limited to Studio or an experience owned by LocalPlayer.
+-- All features work everywhere.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -16,9 +16,6 @@ if not LocalPlayer then
     warn("[BezNigativa] LocalPlayer not found")
     return
 end
-
-local safeEnvironment = RunService:IsStudio()
-    or (game.CreatorType == Enum.CreatorType.User and game.CreatorId == LocalPlayer.UserId)
 
 local env = (getgenv and getgenv()) or _G
 if type(env.BezNigativaCleanup) == "function" then
@@ -567,7 +564,7 @@ bind(Players.PlayerAdded:Connect(function(player) task.defer(createPlayerDrawing
 bind(Players.PlayerRemoving:Connect(removePlayerDrawings))
 
 -- MOVEMENT
-pageTitle(MovementPage, "Movement", safeEnvironment and "Enabled in this test environment" or "Locked: Studio / your own place only")
+pageTitle(MovementPage, "Movement", "All movement features enabled")
 
 local speedEnabled = false
 local jumpEnabled = false
@@ -672,20 +669,18 @@ bind(LocalPlayer.CharacterAdded:Connect(function()
     restoreNoclip()
     task.wait(0.2)
     captureDefaults()
-    if flyEnabled and safeEnvironment then
+    if flyEnabled then
         setFlyState(true)
     end
 end))
 
 local speedToggle = createToggle(MovementPage, 18, 78, 190, "Speed", false, function(value)
-    if value and not safeEnvironment then return false end
     speedEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then humanoid.WalkSpeed = defaults.WalkSpeed end
 end)
 
 local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, function(value)
-    if value and not safeEnvironment then return false end
     jumpEnabled = value
     local humanoid = getHumanoid()
     if humanoid and not value then
@@ -694,7 +689,6 @@ local jumpToggle = createToggle(MovementPage, 222, 78, 190, "Jump", false, funct
 end)
 
 local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, function(value)
-    if value and not safeEnvironment then return false end
     noclipEnabled = value
     if not value then
         restoreNoclip()
@@ -702,7 +696,6 @@ local noclipToggle = createToggle(MovementPage, 18, 122, 190, "NoClip", false, f
 end)
 
 local flyToggle = createToggle(MovementPage, 222, 122, 190, "Fly", false, function(value)
-    if value and not safeEnvironment then return false end
     flyEnabled = value
     setFlyState(value)
 end)
@@ -725,7 +718,7 @@ flyHint.TextYAlignment = Enum.TextYAlignment.Top
 flyHint.Parent = MovementPage
 
 local function updateNoclip()
-    if not noclipEnabled or not safeEnvironment then return end
+    if not noclipEnabled then return end
     local character = LocalPlayer.Character
     if not character then return end
 
@@ -740,7 +733,7 @@ local function updateNoclip()
 end
 
 local function updateFly()
-    if not flyEnabled or not safeEnvironment then return end
+    if not flyEnabled then return end
 
     local humanoid = getHumanoid()
     local root = getRoot()
@@ -785,7 +778,6 @@ local function updateFly()
 end
 
 local function updateMovement()
-    if not safeEnvironment then return end
     local humanoid = getHumanoid()
     if humanoid then
         if speedEnabled then humanoid.WalkSpeed = speedValue end
@@ -802,7 +794,7 @@ local function updateMovement()
 end
 
 -- COMBAT / CAMERA ASSIST
-pageTitle(CombatPage, "Combat", safeEnvironment and "AimBot test | first person" or "Locked: Studio / your own place only")
+pageTitle(CombatPage, "Combat", "AimBot test | first person")
 
 local cameraAssistEnabled = false
 local fovRadius = 140
@@ -817,7 +809,6 @@ local aimGroups = {
 }
 
 local cameraToggle = createToggle(CombatPage, 18, 78, 190, "AimBot", false, function(value)
-    if value and not safeEnvironment then return false end
     cameraAssistEnabled = value
 end)
 
@@ -825,7 +816,6 @@ local getFov, setFov = createStepper(CombatPage, 128, "FOV", fovRadius, 20, 600,
 local getAimSpeed, setAimSpeed = createStepper(CombatPage, 172, "Aim speed", aimSpeed, 1, 100, 1, function(v) aimSpeed = v end)
 
 local wallCheckToggle = createToggle(CombatPage, 222, 78, 190, "Wall Check", true, function(value)
-    if value and not safeEnvironment then return false end
     wallCheckEnabled = value
 end)
 
@@ -939,9 +929,7 @@ local function candidatePositions(character)
     end
 
     return result
-end
-
-local function hasLineOfSight(targetCharacter, worldPosition)
+endlocal function hasLineOfSight(targetCharacter, worldPosition)
     if not wallCheckEnabled or not Camera then return true end
 
     local direction = worldPosition - Camera.CFrame.Position
@@ -994,10 +982,10 @@ local function updateCombat(deltaTime)
     if fovCircle then
         fovCircle.Position = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
         fovCircle.Radius = fovRadius
-        fovCircle.Visible = cameraAssistEnabled and safeEnvironment
+        fovCircle.Visible = cameraAssistEnabled
     end
 
-    if not cameraAssistEnabled or not safeEnvironment then return end
+    if not cameraAssistEnabled then return end
 
     if not isFirstPerson() then
         combatStatus.Text = "Enter first person to use AimBot"
@@ -1090,17 +1078,15 @@ local function applyConfig(data)
     if type(movement.jump) == "number" then setJump(movement.jump) end
     if type(movement.flySpeed) == "number" then setFlySpeed(movement.flySpeed) end
 
-    if safeEnvironment then
-        if type(movement.speedEnabled) == "boolean" then speedEnabled = movement.speedEnabled; speedToggle.Set(speedEnabled) end
-        if type(movement.jumpEnabled) == "boolean" then jumpEnabled = movement.jumpEnabled; jumpToggle.Set(jumpEnabled) end
-        if type(movement.noclipEnabled) == "boolean" then noclipEnabled = movement.noclipEnabled; noclipToggle.Set(noclipEnabled) end
-        if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
-    end
+    if type(movement.speedEnabled) == "boolean" then speedEnabled = movement.speedEnabled; speedToggle.Set(speedEnabled) end
+    if type(movement.jumpEnabled) == "boolean" then jumpEnabled = movement.jumpEnabled; jumpToggle.Set(jumpEnabled) end
+    if type(movement.noclipEnabled) == "boolean" then noclipEnabled = movement.noclipEnabled; noclipToggle.Set(noclipEnabled) end
+    if type(movement.flyEnabled) == "boolean" then flyEnabled = movement.flyEnabled; flyToggle.Set(flyEnabled); setFlyState(flyEnabled) end
 
     if type(combat.fov) == "number" then setFov(combat.fov) end
     if type(combat.aimSpeed) == "number" then setAimSpeed(combat.aimSpeed) end
     if type(combat.wallCheck) == "boolean" then wallCheckEnabled = combat.wallCheck; wallCheckToggle.Set(wallCheckEnabled) end
-    if safeEnvironment and type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
+    if type(combat.enabled) == "boolean" then cameraAssistEnabled = combat.enabled; cameraToggle.Set(cameraAssistEnabled) end
 
     if type(combat.aimGroups) == "table" then
         for name, toggle in pairs(groupButtons) do
