@@ -23,3 +23,13 @@ getgenv().BezNigativaSourceRoot = "путь/к/src"
 ```
 
 Настройки автоматически читаются и сохраняются в `BezNigativa/config.json`. Повторный запуск сначала полностью выгружает предыдущий экземпляр.
+
+## Запуск через инжектор
+
+Корневой `main.lua` загружает классы из `src` напрямую с GitHub. `dist/BezNigativa.lua` является автоматически собранной standalone-версией.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/main/main.lua"))()
+```
+
+После изменений в классах заново запустите `build.ps1`, чтобы обновить standalone-файл.
