@@ -101,6 +101,7 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "BezNigativaGUI"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
+gui:SetAttribute("Build", "4.1-friends")
 gui.Parent = guiParent
 
 local window = Instance.new("Frame")
@@ -142,7 +143,7 @@ title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(13, 0)
 title.Size = UDim2.new(1, -26, 1, 0)
 title.Font = Enum.Font.Code
-title.Text = "BezNigativa"
+title.Text = "BezNigativa v4.1"
 title.TextColor3 = Color3.fromRGB(238, 238, 238)
 title.TextSize = 16
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -1821,4 +1822,4 @@ end
 
 env.BezNigativaCleanup = cleanup
 
-print("[BezNigativa] Loaded | Combat / Movement / Visual / Friend / Other")
+print("[BezNigativa v4.1] Loaded | Combat / Movement / Visual / Friend / Other")
