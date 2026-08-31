@@ -140,6 +140,20 @@ local function findCharacterInValue(value, localCharacter, depth, seen)
     return nil
 end
 
+local function containsCharacter(value, target, depth, seen)
+    if not target then return false end
+    if characterFromInstance(value) == target then return true end
+    if type(value) ~= "table" or depth >= 3 or seen[value] then return false end
+    seen[value] = true
+    local inspected = 0
+    for _, nested in pairs(value) do
+        inspected += 1
+        if inspected > 40 then break end
+        if containsCharacter(nested, target, depth + 1, seen) then return true end
+    end
+    return false
+end
+
 local function normalizedCombatPayload(payload, eventName)
     if type(payload) ~= "table" then return nil end
     if isCombatEventName(payload.Event or payload.Type or payload.StateEvent or payload[1]) then return payload end
@@ -535,11 +549,20 @@ function UntitledBoxingGame:InspectRemotePayload(remote, ...)
 end
 
 function UntitledBoxingGame:OnReplicateTryAttack(remote, arguments)
-    local attacker = findCharacterInValue(arguments, self.ctx.LocalPlayer.Character, 0, {})
+    local localCharacter = self.ctx.LocalPlayer.Character
+    local lockedOpponent = self:LockedCharacter(localCharacter)
+    local attacker
+    if self.OnlyLockedOpponent then
+        if not lockedOpponent then return end
+        if not containsCharacter(arguments, lockedOpponent, 0, {}) then return end
+        attacker = lockedOpponent
+    else
+        attacker = findCharacterInValue(arguments, localCharacter, 0, {})
+    end
     if not attacker then
-        if not self.TryAttackMissingAttackerWarning then
+        if self.Debug and not self.TryAttackMissingAttackerWarning then
             self.TryAttackMissingAttackerWarning = true
-            self:AddDiagnostic("ReplicateTryAttack найден, но Instance атакующего не удалось преобразовать в Character.", true)
+            self:AddDiagnostic("ReplicateTryAttack пропущен: в пакете нет Character атакующего.", false)
         end
         return
     end
@@ -569,7 +592,7 @@ function UntitledBoxingGame:OnReplicateTryAttack(remote, arguments)
             return
         end
 
-        local attackId = {Remote = remote, Sequence = sequence, Payload = arguments[1]}
+        local attackId = attacker.Name .. "#" .. tostring(sequence)
         local attack = self.Controller:Start(attacker, attackId, "M1", now, impactTime, {})
         if attack then
             attack.SourceStage = "ReplicateTryAttack"
@@ -887,8 +910,15 @@ function UntitledBoxingGame:FindState(character, names)
 end
 
 function UntitledBoxingGame:LockedCharacter(character)
-    local value = self:FindState(character, {"LockedOn", "LockOn", "Target"})
-    return typeof(value) == "Instance" and value or nil
+    local folder = self:StateFolder(character)
+    local occupied = folder and folder:FindFirstChild("Occupied")
+    local lockedNode = occupied and occupied:FindFirstChild("LockedOn")
+    local value = valueOf(lockedNode)
+    local normalized = characterFromInstance(value)
+    if normalized then return normalized end
+
+    value = self:FindState(character, {"LockedOn", "LockOn", "Target"})
+    return characterFromInstance(value)
 end
 
 function UntitledBoxingGame:IsTruthyState(character, names)
@@ -977,26 +1007,36 @@ function UntitledBoxingGame:ResolveDodgeRemote()
     return self.DodgeRemote
 end
 
-function UntitledBoxingGame:SendDodgeInput()
+function UntitledBoxingGame:SendDodgeInput(side)
     local environment = executorEnvironment()
     local press = environment.keypress or keypress
     local release = environment.keyrelease or keyrelease
+    local sideVirtualKey = side == "Right" and 0x44 or 0x41
+    local sideKeyCode = side == "Right" and Enum.KeyCode.D or Enum.KeyCode.A
     if type(press) == "function" and type(release) == "function" then
         local ok = pcall(function()
+            press(sideVirtualKey)
             press(0x20)
-            task.delay(0.025, function() pcall(release, 0x20) end)
+            task.delay(0.04, function()
+                pcall(release, 0x20)
+                pcall(release, sideVirtualKey)
+            end)
         end)
-        if ok then return true, "executor Space input" end
+        if ok then return true, "executor " .. (side == "Right" and "D" or "A") .. "+Space input" end
     end
 
     local ok = pcall(function()
         local input = game:GetService("VirtualInputManager")
+        input:SendKeyEvent(true, sideKeyCode, false, game)
         input:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.delay(0.025, function()
-            pcall(function() input:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+        task.delay(0.04, function()
+            pcall(function()
+                input:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                input:SendKeyEvent(false, sideKeyCode, false, game)
+            end)
         end)
     end)
-    return ok, ok and "VirtualInputManager Space" or nil
+    return ok, ok and "VirtualInputManager " .. (side == "Right" and "D" or "A") .. "+Space" or nil
 end
 
 function UntitledBoxingGame:ExecuteDodge(attack)
@@ -1005,7 +1045,26 @@ function UntitledBoxingGame:ExecuteDodge(attack)
     local attackerRoot = humanoidRoot(attack.Attacker)
     if not root or not attackerRoot then return false end
 
-    local inputOk, inputSource = self:SendDodgeInput()
+    local direction = root.Position - attackerRoot.Position
+    if direction.Magnitude < 0.01 then direction = root.CFrame.RightVector end
+    self.DodgeSide = self.DodgeSide == "Right" and "Left" or "Right"
+
+    local remote = self:ResolveDodgeRemote()
+    if remote then
+        local remoteOk = pcall(function()
+            remote:FireServer({{direction, self.DodgeSide}, "\21"})
+        end)
+        if remoteOk then
+            if not self.DodgeInputReported then
+                self.DodgeInputReported = true
+                self:AddDiagnostic("Dodge выполняется через штатный UBG dash-пакет: " .. fullName(remote) .. ".", false)
+            end
+            self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
+            return true
+        end
+    end
+
+    local inputOk, inputSource = self:SendDodgeInput(self.DodgeSide)
     if inputOk then
         if not self.DodgeInputReported then
             self.DodgeInputReported = true
@@ -1014,19 +1073,7 @@ function UntitledBoxingGame:ExecuteDodge(attack)
         self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
         return true
     end
-
-    local remote = self:ResolveDodgeRemote()
-    if not remote then return false end
-    local direction = root.Position - attackerRoot.Position
-    if direction.Magnitude < 0.01 then direction = root.CFrame.RightVector end
-    self.DodgeSide = self.DodgeSide == "Right" and "Left" or "Right"
-    remote:FireServer({{direction, self.DodgeSide}, "\21"})
-    if not self.DodgeInputReported then
-        self.DodgeInputReported = true
-        self:AddDiagnostic("Space input недоступен; используется BridgeNet2 dodge fallback.", false)
-    end
-    self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
-    return true
+    return false
 end
 
 function UntitledBoxingGame:GetConfig()
