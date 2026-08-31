@@ -210,8 +210,11 @@ function ViolenceDistrict:TryAutoReaction()
         return
     end
     if self.ReactionTriggered or not line or not goal or not self:IsRepairingGenerator() then return end
-    local startRotation = (goal.Rotation + 101) % 360
-    local endRotation = (goal.Rotation + 115) % 360
+    -- The full green sector is roughly +101..+115 degrees. Triggering on its
+    -- first pixel is unstable because the displayed line can be one frame
+    -- ahead of the state processed by the game. Use the inner sector instead.
+    local startRotation = (goal.Rotation + 106) % 360
+    local endRotation = (goal.Rotation + 111) % 360
     if self:IsRotationInside(line.Rotation, startRotation, endRotation) then
         self.ReactionTriggered = true
         self:PressReaction()
