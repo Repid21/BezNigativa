@@ -11,6 +11,12 @@ local function humanoidRoot(character)
     return character and character:FindFirstChild("HumanoidRootPart")
 end
 
+local function isEffectHelper(value)
+    return type(value) == "table"
+        and type(rawget(value, "AttackTrail")) == "function"
+        and type(rawget(value, "StartupHighlight")) == "function"
+end
+
 function UntitledBoxingGame.new(ctx)
     local self = setmetatable({
         ctx = ctx,
@@ -98,28 +104,75 @@ function UntitledBoxingGame:SetEnabled(value)
     self.Controller:SetEnabled(self.Enabled)
     if self.Enabled then
         local ok, message = self:InstallHooks()
-        self:SetStatus(ok and "combat flow connected" or tostring(message), not ok)
+        self:SetStatus(ok and ("combat flow connected via " .. tostring(message or "table")) or tostring(message), not ok)
     else
         self:UninstallHooks()
         self:SetStatus("disabled", false)
     end
 end
 
+function UntitledBoxingGame:FindLoadedEffectHelper()
+    local environment = _G
+    if type(getgenv) == "function" then
+        local ok, result = pcall(getgenv)
+        if ok and type(result) == "table" then environment = result end
+    end
+    local getGarbage = environment.getgc or getgc
+    if type(getGarbage) ~= "function" then return nil end
+    local ok, objects = pcall(getGarbage, true)
+    if not ok or type(objects) ~= "table" then ok, objects = pcall(getGarbage) end
+    if not ok or type(objects) ~= "table" then return nil end
+    for _, candidate in pairs(objects) do
+        if isEffectHelper(candidate) then return candidate end
+    end
+    return nil
+end
+
 function UntitledBoxingGame:ResolveEffectHelper()
-    if self.EffectHelper then return self.EffectHelper end
+    if isEffectHelper(self.EffectHelper) then return self.EffectHelper, self.EffectHelperSource end
+
+    local loaded = self:FindLoadedEffectHelper()
+    if loaded then
+        self.EffectHelper, self.EffectHelperSource = loaded, "getgc"
+        self.Controller:Log("EffectHelper resolved from loaded combat table")
+        return loaded, self.EffectHelperSource
+    end
+
     local modules = self.ctx.ReplicatedStorage:FindFirstChild("Modules")
-    local source = modules and modules:FindFirstChild("EffectHelper")
-    if not source or not source:IsA("ModuleScript") then return nil, "EffectHelper not found" end
+    local source = modules and modules:FindFirstChild("EffectHelper", true)
+    source = source or self.ctx.ReplicatedStorage:FindFirstChild("EffectHelper", true)
+    if not source or not source:IsA("ModuleScript") then return nil, "EffectHelper not found (getgc/ModuleScript)" end
     local ok, result = pcall(require, source)
-    if not ok or type(result) ~= "table" then return nil, "EffectHelper require failed" end
-    self.EffectHelper = result
-    return result
+    if ok and isEffectHelper(result) then
+        self.EffectHelper, self.EffectHelperSource = result, "require"
+        return result, self.EffectHelperSource
+    end
+
+    if type(getrenv) == "function" then
+        local environmentOk, runtimeEnvironment = pcall(getrenv)
+        local runtimeRequire = environmentOk and type(runtimeEnvironment) == "table" and runtimeEnvironment.require or nil
+        if type(runtimeRequire) == "function" and runtimeRequire ~= require then
+            local runtimeOk, runtimeResult = pcall(runtimeRequire, source)
+            if runtimeOk and isEffectHelper(runtimeResult) then
+                self.EffectHelper, self.EffectHelperSource = runtimeResult, "getrenv require"
+                return runtimeResult, self.EffectHelperSource
+            end
+        end
+    end
+
+    loaded = self:FindLoadedEffectHelper()
+    if loaded then
+        self.EffectHelper, self.EffectHelperSource = loaded, "getgc after require"
+        return loaded, self.EffectHelperSource
+    end
+    self.Controller:Log("EffectHelper require failed | " .. tostring(result))
+    return nil, "EffectHelper unavailable (require/getgc)"
 end
 
 function UntitledBoxingGame:InstallHooks()
-    if next(self.Hooks) then return true end
-    local helper, message = self:ResolveEffectHelper()
-    if not helper then return false, message end
+    if next(self.Hooks) then return true, self.EffectHelperSource end
+    local helper, sourceOrError = self:ResolveEffectHelper()
+    if not helper then return false, sourceOrError end
     local count = 0
     for _, key in ipairs({"AttackTrail", "StartupHighlight"}) do
         local original = helper[key]
@@ -134,8 +187,15 @@ function UntitledBoxingGame:InstallHooks()
                 end
                 return base(data, ...)
             end
+            local wasReadonly = false
+            if type(isreadonly) == "function" then
+                local checked, result = pcall(isreadonly, helper)
+                wasReadonly = checked and result == true
+            end
+            if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
             local patched = pcall(function() helper[key] = wrapper end)
-            if patched then
+            if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
+            if patched and helper[key] == wrapper then
                 self.Hooks[key] = {Original = base, Wrapper = wrapper}
                 count += 1
             end
@@ -143,16 +203,25 @@ function UntitledBoxingGame:InstallHooks()
     end
     if count ~= 2 then
         self:UninstallHooks()
-        return false, "AttackTrail/StartupHighlight flow not found"
+        return false, "EffectHelper found, but hook install failed"
     end
-    return true
+    return true, sourceOrError
 end
 
 function UntitledBoxingGame:UninstallHooks()
     local helper = self.EffectHelper
     if helper then
         for key, hook in pairs(self.Hooks) do
-            if helper[key] == hook.Wrapper then helper[key] = hook.Original end
+            if helper[key] == hook.Wrapper then
+                local wasReadonly = false
+                if type(isreadonly) == "function" then
+                    local checked, result = pcall(isreadonly, helper)
+                    wasReadonly = checked and result == true
+                end
+                if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
+                pcall(function() helper[key] = hook.Original end)
+                if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
+            end
         end
     end
     self.Hooks = {}
