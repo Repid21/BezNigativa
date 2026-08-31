@@ -17,6 +17,18 @@ local function isEffectHelper(value)
         and type(rawget(value, "StartupHighlight")) == "function"
 end
 
+local function tracebackError(message)
+    local text = tostring(message)
+    if type(debug) == "table" and type(debug.traceback) == "function" then
+        return debug.traceback(text, 2)
+    end
+    return text
+end
+
+local function fullName(instance)
+    return instance and instance:GetFullName() or "<missing>"
+end
+
 function UntitledBoxingGame.new(ctx)
     local self = setmetatable({
         ctx = ctx,
@@ -103,12 +115,34 @@ function UntitledBoxingGame:SetEnabled(value)
     self.Enabled = value == true
     self.Controller:SetEnabled(self.Enabled)
     if self.Enabled then
-        local ok, message = self:InstallHooks()
-        self:SetStatus(ok and ("combat flow connected via " .. tostring(message or "table")) or tostring(message), not ok)
+        self:SetStatus("Initializing...", false)
+        local ok = self:InstallHooks()
+        if ok then
+            self.Initialized = true
+            self:SetStatus("Ready", false)
+        else
+            self.Initialized = false
+            self.Enabled = false
+            self.Controller:SetEnabled(false)
+            self.EnabledControl.Set(false)
+            self:SetStatus("ERROR - see Output", true)
+        end
     else
+        self.Initialized = false
         self:UninstallHooks()
         self:SetStatus("disabled", false)
     end
+end
+
+function UntitledBoxingGame:FindEffectHelperModule()
+    local storage = self.ctx.ReplicatedStorage
+    local modules = storage:FindFirstChild("Modules")
+    local expected = modules and modules:FindFirstChild("EffectHelper")
+    if expected and expected:IsA("ModuleScript") then return expected, true end
+    for _, candidate in ipairs(storage:GetDescendants()) do
+        if candidate:IsA("ModuleScript") and candidate.Name == "EffectHelper" then return candidate, false end
+    end
+    return nil, false
 end
 
 function UntitledBoxingGame:FindLoadedEffectHelper()
@@ -118,72 +152,112 @@ function UntitledBoxingGame:FindLoadedEffectHelper()
         if ok and type(result) == "table" then environment = result end
     end
     local getGarbage = environment.getgc or getgc
-    if type(getGarbage) ~= "function" then return nil end
-    local ok, objects = pcall(getGarbage, true)
-    if not ok or type(objects) ~= "table" then ok, objects = pcall(getGarbage) end
-    if not ok or type(objects) ~= "table" then return nil end
+    if type(getGarbage) ~= "function" then return nil, "executor does not expose getgc" end
+    local ok, objects = xpcall(function() return getGarbage(true) end, tracebackError)
+    if not ok or type(objects) ~= "table" then
+        local firstError = objects
+        ok, objects = xpcall(function() return getGarbage() end, tracebackError)
+        if not ok or type(objects) ~= "table" then
+            return nil, "getgc(true): " .. tostring(firstError) .. "\ngetgc(): " .. tostring(objects)
+        end
+    end
     for _, candidate in pairs(objects) do
         if isEffectHelper(candidate) then return candidate end
     end
-    return nil
+    return nil, "loaded EffectHelper API table was not found in getgc"
 end
 
 function UntitledBoxingGame:ResolveEffectHelper()
     if isEffectHelper(self.EffectHelper) then return self.EffectHelper, self.EffectHelperSource end
 
-    local loaded = self:FindLoadedEffectHelper()
+    local moduleScript, expectedPath = self:FindEffectHelperModule()
+    if moduleScript then
+        print("[BezNigativa/UBG] EffectHelper ModuleScript: " .. fullName(moduleScript))
+        if not expectedPath then
+            warn("[BezNigativa/UBG] Expected ReplicatedStorage.Modules.EffectHelper, found alternate path: " .. fullName(moduleScript))
+        end
+    else
+        warn("[BezNigativa/UBG] EffectHelper ModuleScript does not exist under ReplicatedStorage. Expected path: ReplicatedStorage.Modules.EffectHelper")
+    end
+
+    local loaded, getGcError = self:FindLoadedEffectHelper()
     if loaded then
         self.EffectHelper, self.EffectHelperSource = loaded, "getgc"
-        self.Controller:Log("EffectHelper resolved from loaded combat table")
+        print("[BezNigativa/UBG] EffectHelper API resolved from the already loaded combat table (getgc)")
         return loaded, self.EffectHelperSource
     end
 
-    local modules = self.ctx.ReplicatedStorage:FindFirstChild("Modules")
-    local source = modules and modules:FindFirstChild("EffectHelper", true)
-    source = source or self.ctx.ReplicatedStorage:FindFirstChild("EffectHelper", true)
-    if not source or not source:IsA("ModuleScript") then return nil, "EffectHelper not found (getgc/ModuleScript)" end
-    local ok, result = pcall(require, source)
+    if not moduleScript then
+        warn("[BezNigativa/UBG] Auto Dodge initialization failed.\n" .. tostring(getGcError))
+        return nil, "EffectHelper ModuleScript missing"
+    end
+
+    local ok, result = xpcall(function()
+        return require(moduleScript)
+    end, tracebackError)
     if ok and isEffectHelper(result) then
         self.EffectHelper, self.EffectHelperSource = result, "require"
+        print("[BezNigativa/UBG] EffectHelper API returned by require: AttackTrail=function, StartupHighlight=function")
         return result, self.EffectHelperSource
+    end
+    if not ok then
+        warn("[BezNigativa/UBG] EffectHelper require crashed.\nModule: " .. fullName(moduleScript) .. "\nFull error/ dependency traceback:\n" .. tostring(result))
+    else
+        warn("[BezNigativa/UBG] EffectHelper returned an invalid API.\nModule: " .. fullName(moduleScript)
+            .. "\nReturn type: " .. type(result)
+            .. "\nAttackTrail: " .. type(type(result) == "table" and rawget(result, "AttackTrail") or nil)
+            .. "\nStartupHighlight: " .. type(type(result) == "table" and rawget(result, "StartupHighlight") or nil))
     end
 
     if type(getrenv) == "function" then
-        local environmentOk, runtimeEnvironment = pcall(getrenv)
+        local environmentOk, runtimeEnvironment = xpcall(function() return getrenv() end, tracebackError)
         local runtimeRequire = environmentOk and type(runtimeEnvironment) == "table" and runtimeEnvironment.require or nil
         if type(runtimeRequire) == "function" and runtimeRequire ~= require then
-            local runtimeOk, runtimeResult = pcall(runtimeRequire, source)
+            local runtimeOk, runtimeResult = xpcall(function() return runtimeRequire(moduleScript) end, tracebackError)
             if runtimeOk and isEffectHelper(runtimeResult) then
                 self.EffectHelper, self.EffectHelperSource = runtimeResult, "getrenv require"
+                print("[BezNigativa/UBG] EffectHelper API resolved through getrenv().require")
                 return runtimeResult, self.EffectHelperSource
+            end
+            if not runtimeOk then
+                warn("[BezNigativa/UBG] getrenv().require also crashed.\nModule: " .. fullName(moduleScript) .. "\nFull error/ dependency traceback:\n" .. tostring(runtimeResult))
             end
         end
     end
 
-    loaded = self:FindLoadedEffectHelper()
+    loaded, getGcError = self:FindLoadedEffectHelper()
     if loaded then
         self.EffectHelper, self.EffectHelperSource = loaded, "getgc after require"
+        print("[BezNigativa/UBG] EffectHelper API appeared in getgc after require")
         return loaded, self.EffectHelperSource
     end
-    self.Controller:Log("EffectHelper require failed | " .. tostring(result))
-    return nil, "EffectHelper unavailable (require/getgc)"
+    warn("[BezNigativa/UBG] Auto Dodge initialization failed after every resolver.\nModule: " .. fullName(moduleScript)
+        .. "\ngetgc diagnostic: " .. tostring(getGcError))
+    return nil, "EffectHelper resolution failed"
 end
 
 function UntitledBoxingGame:InstallHooks()
     if next(self.Hooks) then return true, self.EffectHelperSource end
     local helper, sourceOrError = self:ResolveEffectHelper()
-    if not helper then return false, sourceOrError end
+    if not helper then
+        warn("[BezNigativa/UBG] Auto Dodge is not Ready: " .. tostring(sourceOrError))
+        return false, sourceOrError
+    end
+    local dodgeRemote = self:ResolveDodgeRemote()
+    if not dodgeRemote then
+        warn("[BezNigativa/UBG] Dodge RemoteEvent does not exist. Expected ReplicatedStorage.dataRemoteEvent")
+        return false, "Dodge RemoteEvent missing"
+    end
     local count = 0
     for _, key in ipairs({"AttackTrail", "StartupHighlight"}) do
         local original = helper[key]
         if type(original) == "function" then
             local base = original
-            local wrapper
-            wrapper = function(data, ...)
-                local ok, hookError = pcall(function() self:OnCombatEffect(data) end)
+            local wrapper = function(data, ...)
+                local ok, hookError = xpcall(function() self:OnCombatEffect(data) end, tracebackError)
                 if not ok and not self.HookWarning then
                     self.HookWarning = true
-                    warn("[BezNigativa/UBG] combat hook: " .. tostring(hookError))
+                    warn("[BezNigativa/UBG] combat hook crashed.\nFull traceback:\n" .. tostring(hookError))
                 end
                 return base(data, ...)
             end
@@ -193,26 +267,60 @@ function UntitledBoxingGame:InstallHooks()
                 wasReadonly = checked and result == true
             end
             if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
-            local patched = pcall(function() helper[key] = wrapper end)
+            local patched, patchError = xpcall(function() helper[key] = wrapper end, tracebackError)
             if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
             if patched and helper[key] == wrapper then
-                self.Hooks[key] = {Original = base, Wrapper = wrapper}
+                self.Hooks[key] = {Mode = "Table", Original = base, Wrapper = wrapper}
                 count += 1
+            else
+                local environment = type(getgenv) == "function" and getgenv() or _G
+                local hookFunction = environment.hookfunction or hookfunction
+                local hookOk, previous
+                if type(hookFunction) == "function" then
+                    hookOk, previous = xpcall(function() return hookFunction(original, wrapper) end, tracebackError)
+                end
+                if hookOk and type(previous) == "function" then
+                    base = previous
+                    self.Hooks[key] = {
+                        Mode = "HookFunction",
+                        Target = original,
+                        Original = previous,
+                        Wrapper = wrapper,
+                        HookFunction = hookFunction,
+                    }
+                    count += 1
+                else
+                    warn("[BezNigativa/UBG] Failed to install " .. key .. " hook."
+                        .. "\nTable assignment error:\n" .. tostring(patchError or "table rejected assignment")
+                        .. "\nhookfunction error:\n" .. tostring(previous or "hookfunction unavailable"))
+                end
             end
+        else
+            warn("[BezNigativa/UBG] Invalid EffectHelper API: " .. key .. " is " .. type(original) .. ", expected function")
         end
     end
     if count ~= 2 then
         self:UninstallHooks()
-        return false, "EffectHelper found, but hook install failed"
+        warn("[BezNigativa/UBG] Auto Dodge hook verification failed: installed " .. tostring(count) .. "/2 handlers")
+        return false, "combat hook verification failed"
     end
+    print("[BezNigativa/UBG] Auto Dodge initialized and Ready | EffectHelper=" .. tostring(sourceOrError)
+        .. " | DodgeRemote=" .. fullName(dodgeRemote) .. " | Hooks=2/2")
     return true, sourceOrError
 end
 
 function UntitledBoxingGame:UninstallHooks()
     local helper = self.EffectHelper
-    if helper then
-        for key, hook in pairs(self.Hooks) do
-            if helper[key] == hook.Wrapper then
+    for key, hook in pairs(self.Hooks) do
+        if hook.Mode == "HookFunction" then
+            local environment = type(getgenv) == "function" and getgenv() or _G
+            local restoreFunction = environment.restorefunction or restorefunction
+            if type(restoreFunction) == "function" then
+                pcall(restoreFunction, hook.Target)
+            elseif type(hook.HookFunction) == "function" then
+                pcall(hook.HookFunction, hook.Target, hook.Original)
+            end
+        elseif helper and helper[key] == hook.Wrapper then
                 local wasReadonly = false
                 if type(isreadonly) == "function" then
                     local checked, result = pcall(isreadonly, helper)
@@ -221,7 +329,6 @@ function UntitledBoxingGame:UninstallHooks()
                 if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
                 pcall(function() helper[key] = hook.Original end)
                 if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
-            end
         end
     end
     self.Hooks = {}
