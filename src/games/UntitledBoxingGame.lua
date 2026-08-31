@@ -925,7 +925,11 @@ function UntitledBoxingGame:IsTruthyState(character, names)
     local value = self:FindState(character, names)
     if type(value) == "boolean" then return value end
     if type(value) == "number" then return value > 0 end
-    if type(value) == "string" then return value ~= "" and value ~= "Idle" and value ~= "None" end
+    if type(value) == "string" then
+        local normalized = string.lower(value)
+        return normalized ~= "" and normalized ~= "idle" and normalized ~= "none"
+            and normalized ~= "false" and normalized ~= "0" and normalized ~= "nil"
+    end
     return value ~= nil
 end
 
@@ -994,7 +998,6 @@ function UntitledBoxingGame:CanDodge()
     if self:IsTruthyState(character, {"Stunned", "Stun"}) then return false, "player stunned" end
     if self:IsTruthyState(character, {"Knocked", "Knockdown", "Downed", "Ragdolled"}) then return false, "player knockdown" end
     if self:IsTruthyState(character, {"Recovery", "Recovering"}) then return false, "player recovery" end
-    if self:IsTruthyState(character, {"Punching", "Attacking", "AttackLocked", "Endlag", "EndLag"}) then return false, "player action locked" end
     if self:IsDodgeCooldown(character) then return false, "dodge cooldown" end
     return true
 end
@@ -1050,25 +1053,21 @@ function UntitledBoxingGame:ExecuteDodge(attack)
     self.DodgeSide = self.DodgeSide == "Right" and "Left" or "Right"
 
     local remote = self:ResolveDodgeRemote()
+    local remoteOk = false
     if remote then
-        local remoteOk = pcall(function()
+        remoteOk = pcall(function()
             remote:FireServer({{direction, self.DodgeSide}, "\21"})
         end)
-        if remoteOk then
-            if not self.DodgeInputReported then
-                self.DodgeInputReported = true
-                self:AddDiagnostic("Dodge выполняется через штатный UBG dash-пакет: " .. fullName(remote) .. ".", false)
-            end
-            self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
-            return true
-        end
     end
 
     local inputOk, inputSource = self:SendDodgeInput(self.DodgeSide)
-    if inputOk then
+    if remoteOk or inputOk then
         if not self.DodgeInputReported then
             self.DodgeInputReported = true
-            self:AddDiagnostic("Dodge выполняется через штатный ввод игры: " .. tostring(inputSource) .. ".", false)
+            local methods = {}
+            if remoteOk then table.insert(methods, "UBG dash packet " .. fullName(remote)) end
+            if inputOk then table.insert(methods, tostring(inputSource)) end
+            self:AddDiagnostic("Dodge request отправлен: " .. table.concat(methods, " + ") .. ".", false)
         end
         self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
         return true

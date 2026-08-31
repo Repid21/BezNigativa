@@ -196,7 +196,7 @@ function AutoDodgeController:Schedule(attack)
         end
         self:MarkHandled(attack.AttackId)
         self.Scheduled[attack.AttackId] = nil
-        self:Log("Dodge executed | AttackId " .. self:IdText(attack.AttackId))
+        self:Log("Dodge request sent | AttackId " .. self:IdText(attack.AttackId))
     end
 
     self.Options.Delay(math.max(0, executeAt - self.Options.Now()), execute)
