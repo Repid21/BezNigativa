@@ -16,6 +16,29 @@ local function isEffectHelper(value)
         and type(rawget(value, "StartupHighlight")) == "function"
 end
 
+local function executorEnvironment()
+    local environment = _G
+    if type(getgenv) == "function" then
+        local ok, result = pcall(getgenv)
+        if ok and type(result) == "table" then environment = result end
+    end
+    return environment
+end
+
+local function findEffectHelperInValue(value, depth, seen)
+    if isEffectHelper(value) then return value end
+    if type(value) ~= "table" or depth >= 3 or seen[value] then return nil end
+    seen[value] = true
+    local inspected = 0
+    for _, nested in pairs(value) do
+        inspected += 1
+        if inspected > 64 then break end
+        local found = findEffectHelperInValue(nested, depth + 1, seen)
+        if found then return found end
+    end
+    return nil
+end
+
 local function tracebackError(message)
     local text = tostring(message)
     if type(debug) == "table" and type(debug.traceback) == "function" then
@@ -149,7 +172,7 @@ function UntitledBoxingGame.new(ctx)
         CanHit = function(attack) return self:CanAttackHit(attack) end,
         CanDodge = function(attack) return self:CanDodge(attack) end,
         Dodge = function(attack) return self:ExecuteDodge(attack) end,
-        Log = function(message) print(message) end,
+        Log = function(message) self:AddDiagnostic(message, false) end,
     })
     return self
 end
@@ -209,11 +232,12 @@ function UntitledBoxingGame:SetEnabled(value)
     self.Controller:SetEnabled(self.Enabled)
     if self.Enabled then
         self:ResetDiagnostics()
+        self.CombatConfirmed = false
         self:SetStatus("Initializing...", false)
         local ok, message = self:InstallHooks()
         if ok then
             self.Initialized = true
-            self:SetStatus("Ready", false)
+            self:SetStatus(self.CombatConfirmed and "Ready" or "Listening: waiting for first attack", false)
         else
             self.Initialized = false
             self.Enabled = false
@@ -240,11 +264,7 @@ function UntitledBoxingGame:FindEffectHelperModule()
 end
 
 function UntitledBoxingGame:FindLoadedEffectHelper()
-    local environment = _G
-    if type(getgenv) == "function" then
-        local ok, result = pcall(getgenv)
-        if ok and type(result) == "table" then environment = result end
-    end
+    local environment = executorEnvironment()
     local getGarbage = environment.getgc or getgc
     if type(getGarbage) ~= "function" then return nil, "executor does not expose getgc" end
     local ok, objects = xpcall(function() return getGarbage(true) end, tracebackError)
@@ -259,6 +279,56 @@ function UntitledBoxingGame:FindLoadedEffectHelper()
         if isEffectHelper(candidate) then return candidate end
     end
     return nil, "loaded EffectHelper API table was not found in getgc"
+end
+
+function UntitledBoxingGame:GetFunctionUpvalues(callback)
+    local environment = executorEnvironment()
+    local getter = environment.getupvalues
+    if type(getter) ~= "function" and type(debug) == "table" then getter = debug.getupvalues end
+    if type(getter) == "function" then
+        local ok, values = xpcall(function() return getter(callback) end, tracebackError)
+        if ok and type(values) == "table" then return values end
+    end
+    local getOne = environment.getupvalue
+    if type(getOne) ~= "function" and type(debug) == "table" then getOne = debug.getupvalue end
+    if type(getOne) ~= "function" then return nil end
+    local values = {}
+    for index = 1, 40 do
+        local ok, name, value = pcall(getOne, callback, index)
+        if not ok or name == nil then break end
+        if value == nil and type(name) ~= "string" then values[index] = name
+        else values[name] = value end
+    end
+    return values
+end
+
+function UntitledBoxingGame:FindEffectHelperFromConnections()
+    local environment = executorEnvironment()
+    local getConnections = environment.getconnections or getconnections
+    if type(getConnections) ~= "function" then return nil, "executor does not expose getconnections" end
+    local remoteCount, connectionCount, functionCount = 0, 0, 0
+    for _, remote in ipairs(self.ctx.ReplicatedStorage:GetDescendants()) do
+        if self:IsClientRemote(remote) then
+            remoteCount += 1
+            local ok, connections = xpcall(function() return getConnections(remote.OnClientEvent) end, tracebackError)
+            if ok and type(connections) == "table" then
+                for _, connection in pairs(connections) do
+                    connectionCount += 1
+                    local readOk, callback = pcall(function() return connection.Function end)
+                    if readOk and type(callback) == "function" then
+                        functionCount += 1
+                        local values = self:GetFunctionUpvalues(callback)
+                        if values then
+                            local helper = findEffectHelperInValue(values, 0, {})
+                            if helper then return helper, fullName(remote) end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil, "scanned remotes=" .. tostring(remoteCount) .. ", connections=" .. tostring(connectionCount)
+        .. ", readable callbacks=" .. tostring(functionCount)
 end
 
 function UntitledBoxingGame:ResolveEffectHelper()
@@ -280,7 +350,16 @@ function UntitledBoxingGame:ResolveEffectHelper()
         self:AddDiagnostic("EffectHelper API найден в уже загруженной combat-таблице (getgc).", false)
         return loaded, self.EffectHelperSource
     end
+
+    local connectionHelper, connectionSource = self:FindEffectHelperFromConnections()
+    if connectionHelper then
+        self.EffectHelper, self.EffectHelperSource = connectionHelper, "OnClientEvent upvalue"
+        self:AddDiagnostic("EffectHelper API найден в upvalue игрового OnClientEvent.\nRemote: " .. tostring(connectionSource), false)
+        return connectionHelper, self.EffectHelperSource
+    end
+
     self:AddDiagnostic("Загруженный EffectHelper API недоступен: " .. tostring(getGcError)
+        .. "\nUpvalue scan: " .. tostring(connectionSource)
         .. "\nПрямой require отключён, потому что игровой ModuleScript падает внутри собственных зависимостей."
         .. "\nПереключаюсь на входящий combat RemoteEvent.", false)
     return nil, "RemoteEvent fallback"
@@ -290,25 +369,28 @@ function UntitledBoxingGame:IsClientRemote(instance)
     return instance:IsA("RemoteEvent") or instance.ClassName == "UnreliableRemoteEvent"
 end
 
+function UntitledBoxingGame:ConfirmCombatFlow(source)
+    if self.CombatConfirmed then return end
+    self.CombatConfirmed = true
+    self:SetStatus("Ready", false)
+    self:AddDiagnostic("Combat flow подтверждён через " .. tostring(source) .. ".", false)
+end
+
 function UntitledBoxingGame:InspectRemotePayload(remote, ...)
     local arguments = table.pack(...)
     if arguments[1] == "AttackTrail" or arguments[1] == "StartupHighlight" then
         local payload = {}
         for index = 1, arguments.n do payload[index] = arguments[index] end
-        if not self.ObservedCombatRemote then
-            self.ObservedCombatRemote = remote
-            self:AddDiagnostic("Combat flow подтверждён через " .. fullName(remote) .. ".", false)
-        end
+        if not self.ObservedCombatRemote then self.ObservedCombatRemote = remote end
+        self:ConfirmCombatFlow(fullName(remote))
         self:OnCombatEffect(payload)
         return
     end
     for index = 1, arguments.n do
         local payload = findCombatPayload(arguments[index], 0, {})
         if payload then
-            if not self.ObservedCombatRemote then
-                self.ObservedCombatRemote = remote
-                self:AddDiagnostic("Combat flow подтверждён через " .. fullName(remote) .. ".", false)
-            end
+            if not self.ObservedCombatRemote then self.ObservedCombatRemote = remote end
+            self:ConfirmCombatFlow(fullName(remote))
             self:OnCombatEffect(payload)
             return
         end
@@ -319,6 +401,10 @@ function UntitledBoxingGame:ConnectCombatRemote(remote)
     self.RemoteConnections = self.RemoteConnections or setmetatable({}, {__mode = "k"})
     if self.RemoteConnections[remote] or not self:IsClientRemote(remote) then return false end
     local connection = remote.OnClientEvent:Connect(function(...)
+        self.RemoteEventsSeen = (self.RemoteEventsSeen or 0) + 1
+        if not self.CombatConfirmed and (self.RemoteEventsSeen <= 3 or self.RemoteEventsSeen % 25 == 0) then
+            self:SetStatus("Listening: " .. tostring(self.RemoteEventsSeen) .. " events / 0 combat", false)
+        end
         local arguments = table.pack(...)
         local ok, message = xpcall(function()
             self:InspectRemotePayload(remote, table.unpack(arguments, 1, arguments.n))
@@ -338,6 +424,7 @@ function UntitledBoxingGame:InstallRemoteObserver()
     if self.RemoteAddedConnection then return true, self.RemoteConnectionCount or 0 end
     self.RemoteConnections = setmetatable({}, {__mode = "k"})
     self.RemoteConnectionCount = 0
+    self.RemoteEventsSeen = 0
     for _, instance in ipairs(self.ctx.ReplicatedStorage:GetDescendants()) do
         if self:IsClientRemote(instance) and self:ConnectCombatRemote(instance) then
             self.RemoteConnectionCount += 1
@@ -363,6 +450,7 @@ function UntitledBoxingGame:UninstallRemoteObserver()
     for _, connection in pairs(self.RemoteConnections or {}) do connection:Disconnect() end
     self.RemoteConnections = setmetatable({}, {__mode = "k"})
     self.RemoteConnectionCount = 0
+    self.RemoteEventsSeen = 0
     self.ObservedCombatRemote = nil
 end
 
@@ -381,7 +469,7 @@ function UntitledBoxingGame:InstallHooks()
             self:AddDiagnostic("Dodge RemoteEvent отсутствует. Ожидался ReplicatedStorage.dataRemoteEvent.", true)
             return false, "Dodge RemoteEvent missing"
         end
-        self:AddDiagnostic("Auto Dodge initialized and Ready через RemoteEvent fallback.\nDodgeRemote="
+        self:AddDiagnostic("Auto Dodge observer initialized; ожидаю первое combat-событие.\nDodgeRemote="
             .. fullName(dodgeRemote), false)
         return true, sourceOrError
     end
@@ -449,7 +537,7 @@ function UntitledBoxingGame:InstallHooks()
             .. " handlers; StartupHighlight=" .. tostring(startupHooked), true)
         return false, "combat hook verification failed"
     end
-    self:AddDiagnostic("Auto Dodge initialized and Ready.\nEffectHelper=" .. tostring(sourceOrError)
+    self:AddDiagnostic("Auto Dodge hooks установлены; ожидаю первое combat-событие.\nEffectHelper=" .. tostring(sourceOrError)
         .. "\nDodgeRemote=" .. fullName(dodgeRemote) .. "\nHooks=" .. tostring(count) .. "/" .. tostring(callableCount), false)
     return true, sourceOrError
 end
@@ -583,6 +671,7 @@ function UntitledBoxingGame:OnCombatEffect(data)
     if not self.Enabled or type(data) ~= "table" or self.SeenEffects[data] then return end
     local eventName = data.Event or data.Type or data.StateEvent or data[1]
     if eventName ~= "AttackTrail" and eventName ~= "StartupHighlight" then return end
+    self:ConfirmCombatFlow(self.ObservedCombatRemote and fullName(self.ObservedCombatRemote) or (self.EffectHelperSource or "EffectHelper hook"))
     self.SeenEffects[data] = true
     local attacker = data.Attacker or data.Character or data[2]
     if typeof(attacker) ~= "Instance" or not attacker:IsA("Model") or attacker == self.ctx.LocalPlayer.Character then return end
