@@ -13,6 +13,12 @@ local PROFILES = {
         UniverseId = 66654135,
         MainPlaceId = 142823291,
     },
+    {
+        Name = "Untitled Boxing Game",
+        Module = "games/UntitledBoxingGame",
+        UniverseId = 4730278139,
+        MainPlaceId = 13621938427,
+    },
 }
 
 function Detector.Detect(dataModel)

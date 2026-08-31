@@ -17,6 +17,7 @@ function App.start(loadModule)
         HttpService = game:GetService("HttpService"),
         Lighting = game:GetService("Lighting"),
         CoreGui = game:GetService("CoreGui"),
+        ReplicatedStorage = game:GetService("ReplicatedStorage"),
     }
     local services = self.Services
     local player = services.Players.LocalPlayer
@@ -30,6 +31,7 @@ function App.start(loadModule)
         RunService = services.RunService,
         UserInputService = services.UserInputService,
         Lighting = services.Lighting,
+        ReplicatedStorage = services.ReplicatedStorage,
         LocalPlayer = player,
         Workspace = workspace,
         LoadModule = loadModule,
@@ -87,7 +89,7 @@ function App.start(loadModule)
         for name, value in pairs(self.SavedGameProfiles or {}) do gameProfiles[name] = value end
         if self.GameProfileName then gameProfiles[self.GameProfileName] = self.GameProfile:GetConfig() end
         return {
-            version = 8.3,
+            version = 9.0,
             friends = self.Friends:GetConfig(),
             visuals = self.Visuals:GetConfig(),
             movement = self.Movement:GetConfig(),
@@ -114,7 +116,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v8.3 modular loaded")
+    print("[BezNigativa] v9.0 modular loaded")
     return self
 end
 

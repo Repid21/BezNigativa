@@ -38,6 +38,7 @@ function MurderMystery2.new(ctx)
         FarmSpeed = 25,
         FarmCollision = setmetatable({}, {__mode = "k"}),
         LastShot = 0,
+        PlayerData = {},
         TouchedCoins = setmetatable({}, {__mode = "k"}),
     }, MurderMystery2)
     local RoleChams = ctx.LoadModule("games/RoleChams")
@@ -85,12 +86,39 @@ function MurderMystery2.new(ctx)
     self.AutoFarmControl = ctx.Window:Toggle(farm.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
         self:SetAutoFarm(value); ctx.Touch()
     end)
-    self:AddHint(farm.Settings, "Летает под картой; при полном мешке возвращает на spawn.")
+    self:AddHint(farm.Settings, "Летает под картой; полный мешок — возврат на безопасный spawn лобби.")
 
     ctx.Janitor:Add(function()
         if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
     end)
+    self:ConnectPlayerData()
+    task.defer(function() self:CaptureLobbyPivot() end)
     return self
+end
+
+function MurderMystery2:ConnectPlayerData()
+    local storage = self.ctx.ReplicatedStorage
+    if not storage then return end
+    local function attach(changed)
+        if self.PlayerDataConnection or not changed or not changed:IsA("RemoteEvent") or changed.Name ~= "PlayerDataChanged" then return end
+        local gameplay = changed.Parent
+        if not gameplay or gameplay.Name ~= "Gameplay" then return end
+        self.PlayerDataConnection = changed.OnClientEvent:Connect(function(data)
+            if type(data) == "table" then self.PlayerData = data end
+            self:CaptureLobbyPivot()
+        end)
+        self.ctx.Janitor:Add(self.PlayerDataConnection)
+    end
+    local remotes = storage:FindFirstChild("Remotes")
+    local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+    attach(gameplay and gameplay:FindFirstChild("PlayerDataChanged"))
+    self.ctx.Janitor:Add(storage.DescendantAdded:Connect(function(item) attach(item) end))
+end
+
+function MurderMystery2:CaptureLobbyPivot()
+    if self:FindMap() then return end
+    local character = self.ctx.LocalPlayer.Character
+    if character then self.LobbyPivot = character:GetPivot() end
 end
 
 function MurderMystery2:RefreshHeartbeat()
@@ -122,6 +150,15 @@ end
 function MurderMystery2:GetRole(player)
     if findTool(player, {"Knife"}) then return "Murderer" end
     if findTool(player, {"Gun", "Revolver"}) then return "Sheriff" end
+    local direct = self.PlayerData[player] or self.PlayerData[player.Name] or self.PlayerData[tostring(player.UserId)]
+    if type(direct) == "table" and (direct.Role == "Murderer" or direct.Role == "Sheriff") then return direct.Role end
+    for key, data in pairs(self.PlayerData) do
+        if type(data) == "table" then
+            local matches = key == player or tostring(key) == player.Name or tostring(key) == tostring(player.UserId)
+            matches = matches or data.Name == player.Name or tonumber(data.UserId) == player.UserId
+            if matches and (data.Role == "Murderer" or data.Role == "Sheriff") then return data.Role end
+        end
+    end
     return "Innocent"
 end
 
@@ -192,7 +229,7 @@ function MurderMystery2:UpdateGunVisual(gunDrop)
 end
 
 function MurderMystery2:PickupGun(gunDrop)
-    if self.AutoFarm or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) or os.clock() - (self.LastPickupAttempt or 0) < 0.25 then return end
+    if self.AutoFarm or self:GetRole(self.ctx.LocalPlayer) == "Murderer" or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) or os.clock() - (self.LastPickupAttempt or 0) < 0.25 then return end
     local part = basePart(gunDrop)
     local character = self.ctx.LocalPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -249,28 +286,55 @@ function MurderMystery2:GetEquippedGun()
     local character = self.ctx.LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local gun = character and findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"})
-    if gun and gun.Parent ~= character and humanoid then humanoid:EquipTool(gun) end
+    if not gun then
+        self.EquippedGun, self.GunReadyAt = nil, nil
+        return nil
+    end
+    if gun.Parent ~= character and humanoid then
+        humanoid:EquipTool(gun)
+        self.EquippedGun = gun
+        self.GunReadyAt = os.clock() + 0.22
+        return nil
+    end
+    if self.EquippedGun ~= gun then
+        self.EquippedGun = gun
+        self.GunReadyAt = os.clock() + 0.08
+    end
+    if os.clock() < (self.GunReadyAt or 0) then return nil end
     return gun
 end
 
-function MurderMystery2:FindShootRemote(gun)
+function MurderMystery2:FindShootRemotes(gun)
+    local found, seen = {}, {}
+    local function add(remote, signature)
+        if remote and not seen[remote] and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
+            seen[remote] = true
+            table.insert(found, {Remote = remote, Signature = signature})
+        end
+    end
     local knifeLocal = gun and gun:FindFirstChild("KnifeLocal")
     local createBeam = knifeLocal and knifeLocal:FindFirstChild("CreateBeam")
     local beamRemote = createBeam and createBeam:FindFirstChild("RemoteFunction")
-    if beamRemote and beamRemote:IsA("RemoteFunction") then return beamRemote, "CreateBeam" end
+    add(beamRemote, "CreateBeam")
 
     local knifeServer = gun and gun:FindFirstChild("KnifeServer")
     local shootGun = knifeServer and knifeServer:FindFirstChild("ShootGun")
-    if shootGun and (shootGun:IsA("RemoteFunction") or shootGun:IsA("RemoteEvent")) then return shootGun, "ShootGun" end
+    add(shootGun, "ShootGun")
 
     local recursive = gun and gun:FindFirstChild("ShootGun", true)
-    if recursive and (recursive:IsA("RemoteFunction") or recursive:IsA("RemoteEvent")) then return recursive, "ShootGun" end
-    return nil, nil
+    add(recursive, "ShootGun")
+    local storage = self.ctx.ReplicatedStorage
+    local remotes = storage and storage:FindFirstChild("Remotes")
+    if remotes then
+        add(remotes:FindFirstChild("ShootGun", true), "ShootGun")
+        add(remotes:FindFirstChild("GunFired", true), "GunFired")
+    end
+    return found
 end
 
 function MurderMystery2:FireGun(remote, signature, point)
     if remote:IsA("RemoteEvent") then
-        remote:FireServer(0, point, "AH")
+        remote:FireServer(point)
     elseif signature == "ShootGun" then
         remote:InvokeServer(0, point, "AH")
     else
@@ -291,8 +355,8 @@ function MurderMystery2:TryAutoShoot()
     if not origin then return end
     local point = self:TargetPoint(target, origin)
     if not point then return end
-    local remote, signature = self:FindShootRemote(gun)
-    if not remote then
+    local remotes = self:FindShootRemotes(gun)
+    if #remotes == 0 then
         if not self.ShootRemoteWarning then
             self.ShootRemoteWarning = true
             warn("[BezNigativa/MM2] Auto Shoot remote not found in equipped gun")
@@ -300,8 +364,17 @@ function MurderMystery2:TryAutoShoot()
         return
     end
     self.Shooting, self.LastShot = true, os.clock()
-    task.spawn(function()
-        pcall(function() self:FireGun(remote, signature, point) end)
+    for _, entry in ipairs(remotes) do
+        local remote, signature = entry.Remote, entry.Signature
+        task.spawn(function()
+            local ok, message = pcall(function() self:FireGun(remote, signature, point) end)
+            if not ok and not self.ShootInvokeWarning then
+                self.ShootInvokeWarning = true
+                warn("[BezNigativa/MM2] Auto Shoot invoke failed: " .. tostring(message))
+            end
+        end)
+    end
+    task.delay(0.2, function()
         self.Shooting = false
     end)
 end
@@ -364,15 +437,33 @@ end
 
 function MurderMystery2:TeleportToSpawn()
     local character = self.ctx.LocalPlayer.Character
-    local map = self:FindMap()
-    local spawns = map and map:FindFirstChild("Spawns", true)
-    if not character or not spawns then return end
-    local choices = {}
-    for _, item in ipairs(spawns:GetDescendants()) do if item:IsA("BasePart") then table.insert(choices, item) end end
-    if #choices > 0 then
-        local spawnPart = choices[math.random(1, #choices)]
-        character:PivotTo(spawnPart.CFrame * CFrame.new(0, 3, 0))
+    if not character then return end
+    local lobby = self.ctx.Workspace:FindFirstChild("Lobby")
+    local spawnPart = lobby and lobby:FindFirstChildWhichIsA("SpawnLocation", true)
+    if not spawnPart and lobby then
+        for _, item in ipairs(lobby:GetDescendants()) do
+            if item:IsA("BasePart") and string.find(string.lower(item.Name), "spawn", 1, true) then
+                spawnPart = item
+                break
+            end
+        end
     end
+    if not spawnPart then
+        local map = self:FindMap()
+        for _, item in ipairs(self.ctx.Workspace:GetDescendants()) do
+            if item:IsA("SpawnLocation") and (not map or not item:IsDescendantOf(map)) then
+                spawnPart = item
+                break
+            end
+        end
+    end
+    if spawnPart then
+        character:PivotTo(spawnPart.CFrame * CFrame.new(0, 4, 0))
+    elseif self.LobbyPivot then
+        character:PivotTo(self.LobbyPivot)
+    end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root then root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
 end
 
 function MurderMystery2:SetAutoFarm(value)
