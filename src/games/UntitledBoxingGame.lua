@@ -13,7 +13,6 @@ end
 
 local function isEffectHelper(value)
     return type(value) == "table"
-        and type(rawget(value, "AttackTrail")) == "function"
         and type(rawget(value, "StartupHighlight")) == "function"
 end
 
@@ -277,7 +276,7 @@ function UntitledBoxingGame:ResolveEffectHelper()
     end, tracebackError)
     if ok and isEffectHelper(result) then
         self.EffectHelper, self.EffectHelperSource = result, "require"
-        self:AddDiagnostic("EffectHelper API корректен: AttackTrail=function, StartupHighlight=function.", false)
+        self:AddDiagnostic("EffectHelper API корректен: StartupHighlight=function. AttackTrail определяется по data[1] внутри общего effect flow.", false)
         return result, self.EffectHelperSource
     end
     if not ok then
@@ -285,7 +284,6 @@ function UntitledBoxingGame:ResolveEffectHelper()
     else
         self:AddDiagnostic("EffectHelper returned an invalid API.\nModule: " .. fullName(moduleScript)
             .. "\nReturn type: " .. type(result)
-            .. "\nAttackTrail: " .. type(type(result) == "table" and rawget(result, "AttackTrail") or nil)
             .. "\nStartupHighlight: " .. type(type(result) == "table" and rawget(result, "StartupHighlight") or nil), true)
     end
 
@@ -328,10 +326,11 @@ function UntitledBoxingGame:InstallHooks()
         self:AddDiagnostic("Dodge RemoteEvent отсутствует. Ожидался ReplicatedStorage.dataRemoteEvent.", true)
         return false, "Dodge RemoteEvent missing"
     end
-    local count = 0
-    for _, key in ipairs({"AttackTrail", "StartupHighlight"}) do
-        local original = helper[key]
+    local count, callableCount = 0, 0
+    local startupHooked = false
+    for key, original in pairs(helper) do
         if type(original) == "function" then
+            callableCount += 1
             local base = original
             local wrapper = function(data, ...)
                 local ok, hookError = xpcall(function() self:OnCombatEffect(data) end, tracebackError)
@@ -353,6 +352,7 @@ function UntitledBoxingGame:InstallHooks()
             if patched and helper[key] == wrapper then
                 self.Hooks[key] = {Mode = "Table", Original = base, Wrapper = wrapper}
                 count += 1
+                if key == "StartupHighlight" then startupHooked = true end
             else
                 local environment = type(getgenv) == "function" and getgenv() or _G
                 local hookFunction = environment.hookfunction or hookfunction
@@ -370,23 +370,23 @@ function UntitledBoxingGame:InstallHooks()
                         HookFunction = hookFunction,
                     }
                     count += 1
+                    if key == "StartupHighlight" then startupHooked = true end
                 else
-                    self:AddDiagnostic("Failed to install " .. key .. " hook."
+                    self:AddDiagnostic("Failed to install " .. tostring(key) .. " hook."
                         .. "\nTable assignment error:\n" .. tostring(patchError or "table rejected assignment")
                         .. "\nhookfunction error:\n" .. tostring(previous or "hookfunction unavailable"), true)
                 end
             end
-        else
-            self:AddDiagnostic("Invalid EffectHelper API: " .. key .. " is " .. type(original) .. ", expected function", true)
         end
     end
-    if count ~= 2 then
+    if callableCount == 0 or count ~= callableCount or not startupHooked then
         self:UninstallHooks()
-        self:AddDiagnostic("Auto Dodge hook verification failed: installed " .. tostring(count) .. "/2 handlers", true)
+        self:AddDiagnostic("Auto Dodge hook verification failed: installed " .. tostring(count) .. "/" .. tostring(callableCount)
+            .. " handlers; StartupHighlight=" .. tostring(startupHooked), true)
         return false, "combat hook verification failed"
     end
     self:AddDiagnostic("Auto Dodge initialized and Ready.\nEffectHelper=" .. tostring(sourceOrError)
-        .. "\nDodgeRemote=" .. fullName(dodgeRemote) .. "\nHooks=2/2", false)
+        .. "\nDodgeRemote=" .. fullName(dodgeRemote) .. "\nHooks=" .. tostring(count) .. "/" .. tostring(callableCount), false)
     return true, sourceOrError
 end
 

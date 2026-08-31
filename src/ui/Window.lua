@@ -30,7 +30,7 @@ function Window.new(player, coreGui, janitor)
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 10
-    gui:SetAttribute("Build", "9.3-modular")
+    gui:SetAttribute("Build", "9.4-modular")
     gui.Parent = parent
     self.Gui = gui
     janitor:Add(gui)
@@ -79,7 +79,7 @@ function Window.new(player, coreGui, janitor)
     title.Position = UDim2.fromOffset(12, 0)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.Text = "BezNigativa v9.3"
+    title.Text = "BezNigativa v9.4"
     title.TextColor3 = Color3.fromRGB(240, 240, 240)
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
