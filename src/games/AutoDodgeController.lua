@@ -55,7 +55,10 @@ function AutoDodgeController:Start(attacker, attackId, attackType, startTime, im
     if old and old.AttackId == attackId then
         if attackType then old.AttackType = attackType end
         if impactTime then old.ImpactTime = impactTime end
-        if hitboxData then old.HitboxData = hitboxData end
+        if hitboxData then
+            old.HitboxData = hitboxData
+            old.HitboxRange = hitboxData.Range or old.HitboxRange
+        end
         return old
     end
     if old and not TERMINAL[old.State] then
@@ -73,6 +76,9 @@ function AutoDodgeController:Start(attacker, attackId, attackType, startTime, im
         StartTime = startTime or self.Options.Now(),
         ImpactTime = impactTime,
         HitboxData = hitboxData,
+        HitboxRange = hitboxData and hitboxData.Range or nil,
+        Committed = false,
+        Cancelled = false,
         Revision = 0,
     }
     self.Current[attacker] = attack
@@ -84,6 +90,8 @@ function AutoDodgeController:Cancel(attacker, attackId, reason)
     local attack = self.Current[attacker]
     if not attack or (attackId ~= nil and attack.AttackId ~= attackId) then return false end
     attack.State = "Cancelled"
+    attack.Cancelled = true
+    attack.Committed = false
     attack.Revision += 1
     self.Scheduled[attack.AttackId] = nil
     self.Current[attacker] = nil
@@ -103,8 +111,13 @@ function AutoDodgeController:Commit(attacker, attackId, attackType, impactTime, 
     end
     if not validAttackType(attack.AttackType) or type(impactTime or attack.ImpactTime) ~= "number" then return false end
     attack.ImpactTime = impactTime or attack.ImpactTime
-    if hitboxData then attack.HitboxData = hitboxData end
+    if hitboxData then
+        attack.HitboxData = hitboxData
+        attack.HitboxRange = hitboxData.Range or attack.HitboxRange
+    end
     attack.State = "Committed"
+    attack.Committed = true
+    attack.Cancelled = false
     attack.Revision += 1
     self:Log(attack.AttackType .. " committed | AttackId " .. self:IdText(attackId))
     self:Schedule(attack)
@@ -122,6 +135,7 @@ function AutoDodgeController:Finish(attacker, attackId)
     local attack = self.Current[attacker]
     if not attack or attack.AttackId ~= attackId then return false end
     attack.State = "Recovery"
+    attack.Committed = false
     attack.Revision += 1
     self.Scheduled[attackId] = nil
     self.Current[attacker] = nil
