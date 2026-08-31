@@ -401,7 +401,7 @@ function Window:AddPage(name, subtitle)
     tab.Font = Enum.Font.Code
     tab.Text = name
     tab.TextColor3 = Color3.fromRGB(175, 175, 175)
-    tab.TextSize = 14
+    tab.TextSize = #name > 16 and 12 or 14
     self.tabCounter += 1
     local preferredOrder = {
         Combat = 1,
@@ -411,7 +411,7 @@ function Window:AddPage(name, subtitle)
         Other = 5,
         Forsaken = 6,
         ["Murder Mystery 2"] = 6,
-        ["Untitled Boxing Game"] = 6,
+        ["VIOLENCE DISTRICT"] = 6,
     }
     tab.LayoutOrder = preferredOrder[name] or (100 + self.tabCounter)
     tab.Parent = self.Sidebar
@@ -1779,10 +1779,10 @@ local PROFILES = {
         MainPlaceId = 142823291,
     },
     {
-        Name = "Untitled Boxing Game",
-        Module = "games/UntitledBoxingGame",
-        UniverseId = 4730278139,
-        MainPlaceId = 13621938427,
+        Name = "VIOLENCE DISTRICT",
+        Module = "games/ViolenceDistrict",
+        UniverseId = 6739698191,
+        MainPlaceId = 93978595733734,
     },
 }
 
@@ -1975,16 +1975,15 @@ function MurderMystery2.new(ctx)
         ctx = ctx,
         RoleChamsEnabled = false,
         RoleAimOnly = false,
-        AutoShoot = false,
-        ShootThroughWalls = false,
+        TriggerBot = false,
         AutoGun = false,
         GunESP = false,
         AutoFarm = false,
         Elapsed = 0,
         FarmBagElapsed = 0,
-        FarmSpeed = 25,
+        FarmSpeed = 20,
         FarmCollision = setmetatable({}, {__mode = "k"}),
-        LastShot = 0,
+        LastTrigger = 0,
         PlayerData = {},
         TouchedCoins = setmetatable({}, {__mode = "k"}),
     }, MurderMystery2)
@@ -1992,7 +1991,7 @@ function MurderMystery2.new(ctx)
     self.RoleChams = RoleChams.new("BezNigativaMM2Role")
     self.GunChams = RoleChams.new("BezNigativaMM2Gun")
 
-    local page = ctx.Window:AddPage("Murder Mystery 2", "Role Aim, Auto Shoot, Gun и Auto Farm")
+    local page = ctx.Window:AddPage("Murder Mystery 2", "Role Aim, TriggerBot, Gun и Auto Farm")
     local stack = ctx.Window:ModuleStack(page, 70)
 
     local roles = stack:Add("Role Chams", 126)
@@ -2009,14 +2008,11 @@ function MurderMystery2.new(ctx)
         self.RoleAimOnly = value; ctx.Touch()
     end)
 
-    local shoot = stack:Add("Auto Shoot", 170)
-    self.AutoShootControl = ctx.Window:Toggle(shoot.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
-        self.AutoShoot = value; self:RefreshHeartbeat(); ctx.Touch()
+    local trigger = stack:Add("TriggerBot", 126)
+    self.TriggerBotControl = ctx.Window:Toggle(trigger.Settings, UDim2.fromOffset(10, 4), 260, "Маньяк / шериф", false, function(value)
+        self.TriggerBot = value; self:RefreshHeartbeat(); ctx.Touch()
     end)
-    self.ShootWallsControl = ctx.Window:Toggle(shoot.Settings, UDim2.fromOffset(240, 4), 220, "Through Walls", false, function(value)
-        self.ShootThroughWalls = value; ctx.Touch()
-    end)
-    self:AddHint(shoot.Settings, "Through Walls OFF — стреляет только при прямой видимости; ON — игнорирует стены.", 48)
+    self:AddHint(trigger.Settings, "Атакует только когда прицел на вражеской роли и нужное оружие в руках.")
 
     local gun = stack:Add("Dropped Gun", 132)
     self.AutoGunControl = ctx.Window:Toggle(gun.Settings, UDim2.fromOffset(10, 4), 220, "Auto Pickup", false, function(value)
@@ -2069,7 +2065,7 @@ function MurderMystery2:CaptureLobbyPivot()
 end
 
 function MurderMystery2:RefreshHeartbeat()
-    local active = self.RoleChamsEnabled or self.AutoShoot or self.AutoGun or self.GunESP or self.AutoFarm
+    local active = self.RoleChamsEnabled or self.TriggerBot or self.AutoGun or self.GunESP or self.AutoFarm
     if active and not self.HeartbeatLoop then
         self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
             local ok, message = pcall(function() self:Heartbeat(delta) end)
@@ -2193,137 +2189,60 @@ function MurderMystery2:PickupGun(gunDrop)
     end
 end
 
-function MurderMystery2:TargetPoint(target, origin)
-    local character = target and target.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not character or not root then return nil end
-    if self.ShootThroughWalls then return root.Position end
+function MurderMystery2:GetEquippedWeapon(role)
+    local character = self.ctx.LocalPlayer.Character
+    if not character then return nil end
+    local names = role == "Murderer" and {"Knife"} or {"Gun", "Revolver"}
+    local weapon = findTool(self.ctx.LocalPlayer, names)
+    if weapon and weapon.Parent == character and weapon.Enabled ~= false then return weapon end
+    return nil
+end
 
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    local excluded = {}
-    if self.ctx.LocalPlayer.Character then table.insert(excluded, self.ctx.LocalPlayer.Character) end
-    local camera = self.ctx.Workspace.CurrentCamera
-    if camera then table.insert(excluded, camera) end
-    for _, player in ipairs(self.ctx.Players:GetPlayers()) do
-        if player.Character then table.insert(excluded, player.Character) end
+function MurderMystery2:GetPlayerUnderCrosshair()
+    if not self.Mouse then
+        local ok, mouse = pcall(function() return self.ctx.LocalPlayer:GetMouse() end)
+        if ok then self.Mouse = mouse end
     end
-    params.FilterDescendantsInstances = excluded
-    params.IgnoreWater = true
-    for _, part in ipairs(character:GetChildren()) do
-        if part:IsA("BasePart") and part.Transparency < 1 then
-            local half = part.Size * 0.45
-            local samples = {
-                part.Position,
-                part.CFrame:PointToWorldSpace(Vector3.new(half.X, 0, 0)),
-                part.CFrame:PointToWorldSpace(Vector3.new(-half.X, 0, 0)),
-                part.CFrame:PointToWorldSpace(Vector3.new(0, half.Y, 0)),
-                part.CFrame:PointToWorldSpace(Vector3.new(0, -half.Y, 0)),
-            }
-            for _, point in ipairs(samples) do
-                local result = self.ctx.Workspace:Raycast(origin, point - origin, params)
-                if not result then return point end
-            end
-        end
+    local item = self.Mouse and self.Mouse.Target
+    while item and item ~= self.ctx.Workspace do
+        local player = self.ctx.Players:GetPlayerFromCharacter(item)
+        if player then return player end
+        item = item.Parent
     end
     return nil
 end
 
-function MurderMystery2:GetEquippedGun()
-    local character = self.ctx.LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local gun = character and findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"})
-    if not gun then
-        self.EquippedGun, self.GunReadyAt = nil, nil
-        return nil
+function MurderMystery2:ClickWeapon()
+    if type(mouse1click) == "function" then
+        return pcall(mouse1click)
     end
-    if gun.Parent ~= character and humanoid then
-        humanoid:EquipTool(gun)
-        self.EquippedGun = gun
-        self.GunReadyAt = os.clock() + 0.22
-        return nil
+    if not self.VirtualInput then
+        local ok, service = pcall(game.GetService, game, "VirtualInputManager")
+        if ok then self.VirtualInput = service end
     end
-    if self.EquippedGun ~= gun then
-        self.EquippedGun = gun
-        self.GunReadyAt = os.clock() + 0.08
-    end
-    if os.clock() < (self.GunReadyAt or 0) then return nil end
-    return gun
-end
-
-function MurderMystery2:FindShootRemotes(gun)
-    local found, seen = {}, {}
-    local function add(remote, signature)
-        if remote and not seen[remote] and (remote:IsA("RemoteFunction") or remote:IsA("RemoteEvent")) then
-            seen[remote] = true
-            table.insert(found, {Remote = remote, Signature = signature})
-        end
-    end
-    local knifeLocal = gun and gun:FindFirstChild("KnifeLocal")
-    local createBeam = knifeLocal and knifeLocal:FindFirstChild("CreateBeam")
-    local beamRemote = createBeam and createBeam:FindFirstChild("RemoteFunction")
-    add(beamRemote, "CreateBeam")
-
-    local knifeServer = gun and gun:FindFirstChild("KnifeServer")
-    local shootGun = knifeServer and knifeServer:FindFirstChild("ShootGun")
-    add(shootGun, "ShootGun")
-
-    local recursive = gun and gun:FindFirstChild("ShootGun", true)
-    add(recursive, "ShootGun")
-    local storage = self.ctx.ReplicatedStorage
-    local remotes = storage and storage:FindFirstChild("Remotes")
-    if remotes then
-        add(remotes:FindFirstChild("ShootGun", true), "ShootGun")
-        add(remotes:FindFirstChild("GunFired", true), "GunFired")
-    end
-    return found
-end
-
-function MurderMystery2:FireGun(remote, signature, point)
-    if remote:IsA("RemoteEvent") then
-        remote:FireServer(point)
-    elseif signature == "ShootGun" then
-        remote:InvokeServer(0, point, "AH")
-    else
-        remote:InvokeServer(1, point, "AH2")
-    end
-end
-
-function MurderMystery2:TryAutoShoot()
-    if not self.AutoShoot or self.Shooting or os.clock() - self.LastShot < 0.12 then return end
-    local targetRole = self:GetRole(self.ctx.LocalPlayer) == "Murderer" and "Sheriff" or "Murderer"
-    local target = self:FindRole(targetRole)
-    if not target or target == self.ctx.LocalPlayer then return end
-    local gun = self:GetEquippedGun()
-    if not gun or gun.Enabled == false then return end
-    local handle = gun:FindFirstChild("Handle")
-    local camera = self.ctx.Workspace.CurrentCamera
-    local origin = handle and handle.Position or camera and camera.CFrame.Position
-    if not origin then return end
-    local point = self:TargetPoint(target, origin)
-    if not point then return end
-    local remotes = self:FindShootRemotes(gun)
-    if #remotes == 0 then
-        if not self.ShootRemoteWarning then
-            self.ShootRemoteWarning = true
-            warn("[BezNigativa/MM2] Auto Shoot remote not found in equipped gun")
-        end
-        return
-    end
-    self.Shooting, self.LastShot = true, os.clock()
-    for _, entry in ipairs(remotes) do
-        local remote, signature = entry.Remote, entry.Signature
-        task.spawn(function()
-            local ok, message = pcall(function() self:FireGun(remote, signature, point) end)
-            if not ok and not self.ShootInvokeWarning then
-                self.ShootInvokeWarning = true
-                warn("[BezNigativa/MM2] Auto Shoot invoke failed: " .. tostring(message))
-            end
+    if not self.VirtualInput then return false end
+    local position = self.ctx.UserInputService:GetMouseLocation()
+    local ok = pcall(function()
+        self.VirtualInput:SendMouseButtonEvent(position.X, position.Y, 0, true, game, 0)
+        task.delay(0.025, function()
+            pcall(function() self.VirtualInput:SendMouseButtonEvent(position.X, position.Y, 0, false, game, 0) end)
         end)
-    end
-    task.delay(0.2, function()
-        self.Shooting = false
     end)
+    return ok
+end
+
+function MurderMystery2:TryTriggerBot()
+    local now = os.clock()
+    if not self.TriggerBot or now - self.LastTrigger < 0.14 then return end
+    local localRole = self:GetRole(self.ctx.LocalPlayer)
+    if localRole ~= "Murderer" and localRole ~= "Sheriff" then return end
+    if not self:GetEquippedWeapon(localRole) then return end
+    local target = self:GetPlayerUnderCrosshair()
+    if not target or target == self.ctx.LocalPlayer then return end
+    local targetRole = localRole == "Murderer" and "Sheriff" or "Murderer"
+    if self:GetRole(target) ~= targetRole then return end
+    self.LastTrigger = now
+    self:ClickWeapon()
 end
 
 function MurderMystery2:FindMap()
@@ -2576,8 +2495,9 @@ function MurderMystery2:FarmStep(delta)
 end
 
 function MurderMystery2:Heartbeat(delta)
-    local regularActive = self.RoleChamsEnabled or self.AutoShoot or self.AutoGun or self.GunESP
-    if not regularActive and not self.AutoFarm then return end
+    local regularActive = self.RoleChamsEnabled or self.AutoGun or self.GunESP
+    if not regularActive and not self.TriggerBot and not self.AutoFarm then return end
+    if self.TriggerBot then self:TryTriggerBot() end
     self.Elapsed += delta
     if regularActive and self.Elapsed >= 0.12 then
         self.Elapsed = 0
@@ -2587,7 +2507,6 @@ function MurderMystery2:Heartbeat(delta)
             if self.GunESP then self:UpdateGunVisual(gunDrop) end
             if self.AutoGun and gunDrop then self:PickupGun(gunDrop) end
         end
-        if self.AutoShoot then self:TryAutoShoot() end
     end
     if self.AutoFarm then self:FarmStep(delta) end
 end
@@ -2596,8 +2515,7 @@ function MurderMystery2:GetConfig()
     return {
         roleChams = self.RoleChamsEnabled,
         roleAimOnly = self.RoleAimOnly,
-        autoShoot = self.AutoShoot,
-        shootThroughWalls = self.ShootThroughWalls,
+        triggerBot = self.TriggerBot,
         autoGun = self.AutoGun,
         gunESP = self.GunESP,
         autoFarm = self.AutoFarm,
@@ -2608,14 +2526,12 @@ function MurderMystery2:ApplyConfig(data)
     if type(data) ~= "table" then return end
     self.RoleChamsEnabled = data.roleChams == true or data.enabled == true
     self.RoleAimOnly = data.roleAimOnly == true
-    self.AutoShoot, self.AutoGun = data.autoShoot == true, data.autoGun == true
-    self.ShootThroughWalls = data.shootThroughWalls == true
+    self.TriggerBot, self.AutoGun = data.triggerBot == true, data.autoGun == true
     self.GunESP = data.gunESP == true
     self:SetAutoFarm(data.autoFarm == true)
     self.RoleChamsControl.Set(self.RoleChamsEnabled)
     self.RoleAimControl.Set(self.RoleAimOnly)
-    self.AutoShootControl.Set(self.AutoShoot)
-    self.ShootWallsControl.Set(self.ShootThroughWalls)
+    self.TriggerBotControl.Set(self.TriggerBot)
     self.AutoGunControl.Set(self.AutoGun)
     self.GunESPControl.Set(self.GunESP)
     self.AutoFarmControl.Set(self.AutoFarm)
@@ -2631,7 +2547,7 @@ function MurderMystery2:Destroy()
         movement.ForcedNoclipPrevious = nil
     end
     self.AutoFarmForcedNoclip, self.AutoFarmPreviousNoclip = nil, nil
-    self.AutoShoot, self.AutoGun, self.AutoFarm = false, false, false
+    self.TriggerBot, self.AutoGun, self.AutoFarm = false, false, false
     self.RoleChamsEnabled, self.GunESP = false, false
     self:RefreshHeartbeat()
     self.RoleChams:Clear(); self:ClearGunVisual()
@@ -2639,1543 +2555,264 @@ end
 
 return MurderMystery2
 ]====],
-    ["games/AutoDodgeController"] = [====[
-local AutoDodgeController = {}
-AutoDodgeController.__index = AutoDodgeController
+    ["games/ViolenceDistrict"] = [====[
+local ViolenceDistrict = {}
+ViolenceDistrict.__index = ViolenceDistrict
 
-local TERMINAL = {Cancelled = true, Recovery = true}
+local KILLER_RED = Color3.fromRGB(255, 45, 45)
+local GENERATOR_YELLOW = Color3.fromRGB(255, 210, 55)
+local GENERATOR_GREEN = Color3.fromRGB(55, 225, 110)
 
-local function validAttackType(value)
-    return value == "M1" or value == "M2"
-end
-
-function AutoDodgeController.new(options)
-    assert(type(options) == "table", "AutoDodgeController options are required")
-    assert(type(options.Now) == "function", "AutoDodgeController requires Now")
-    assert(type(options.Delay) == "function", "AutoDodgeController requires Delay")
-    assert(type(options.CanHit) == "function", "AutoDodgeController requires CanHit")
-    assert(type(options.CanDodge) == "function", "AutoDodgeController requires CanDodge")
-    assert(type(options.Dodge) == "function", "AutoDodgeController requires Dodge")
-    return setmetatable({
-        Options = options,
-        Settings = options.Settings or {},
-        Current = {},
-        Handled = {},
-        HandledOrder = {},
-        Scheduled = {},
-        Enabled = false,
-        Generation = 0,
-    }, AutoDodgeController)
-end
-
-function AutoDodgeController:Log(message)
-    if self.Settings.Debug and self.Options.Log then self.Options.Log("[AutoDodge] " .. message) end
-end
-
-function AutoDodgeController:IdText(attackId)
-    return tostring(attackId)
-end
-
-function AutoDodgeController:SetEnabled(value)
-    self.Enabled = value == true
-    if self.Enabled then return end
-    self.Generation += 1
-    for _, attack in pairs(self.Current) do
-        if not TERMINAL[attack.State] then attack.State = "Cancelled" end
-    end
-    self.Current, self.Scheduled, self.Handled, self.HandledOrder = {}, {}, {}, {}
-end
-
-function AutoDodgeController:GetCurrent(attacker)
-    return self.Current[attacker]
-end
-
-function AutoDodgeController:Start(attacker, attackId, attackType, startTime, impactTime, hitboxData)
-    if not self.Enabled or attacker == nil or attackId == nil then return nil end
-    if attackType ~= nil and not validAttackType(attackType) then return nil end
-    local old = self.Current[attacker]
-    if old and old.AttackId == attackId then
-        if attackType then old.AttackType = attackType end
-        if impactTime then old.ImpactTime = impactTime end
-        if hitboxData then
-            old.HitboxData = hitboxData
-            old.HitboxRange = hitboxData.Range or old.HitboxRange
-        end
-        return old
-    end
-    if old and not TERMINAL[old.State] then
-        local oldType = old.AttackType
-        self:Cancel(attacker, old.AttackId, "replaced")
-        if oldType and attackType and oldType ~= attackType then
-            self:Log(oldType .. " -> " .. attackType .. " detected")
-        end
-    end
-    local attack = {
-        AttackId = attackId,
-        Attacker = attacker,
-        AttackType = attackType,
-        State = "Started",
-        StartTime = startTime or self.Options.Now(),
-        ImpactTime = impactTime,
-        HitboxData = hitboxData,
-        HitboxRange = hitboxData and hitboxData.Range or nil,
-        Committed = false,
-        Cancelled = false,
-        Revision = 0,
-    }
-    self.Current[attacker] = attack
-    self:Log((attackType or "Attack") .. " started | AttackId " .. self:IdText(attackId))
-    return attack
-end
-
-function AutoDodgeController:Cancel(attacker, attackId, reason)
-    local attack = self.Current[attacker]
-    if not attack or (attackId ~= nil and attack.AttackId ~= attackId) then return false end
-    attack.State = "Cancelled"
-    attack.Cancelled = true
-    attack.Committed = false
-    attack.Revision += 1
-    self.Scheduled[attack.AttackId] = nil
-    self.Current[attacker] = nil
-    self:Log("Attack " .. self:IdText(attack.AttackId) .. " cancelled" .. (reason and " | " .. reason or ""))
-    return true
-end
-
-function AutoDodgeController:Commit(attacker, attackId, attackType, impactTime, hitboxData)
-    local attack = self.Current[attacker]
-    if not attack or attack.AttackId ~= attackId then
-        self:Log("Ignore " .. self:IdText(attackId) .. " | stale AttackId")
-        return false
-    end
-    if attackType ~= nil then
-        if not validAttackType(attackType) then return false end
-        attack.AttackType = attackType
-    end
-    if not validAttackType(attack.AttackType) or type(impactTime or attack.ImpactTime) ~= "number" then return false end
-    attack.ImpactTime = impactTime or attack.ImpactTime
-    if hitboxData then
-        attack.HitboxData = hitboxData
-        attack.HitboxRange = hitboxData.Range or attack.HitboxRange
-    end
-    attack.State = "Committed"
-    attack.Committed = true
-    attack.Cancelled = false
-    attack.Revision += 1
-    self:Log(attack.AttackType .. " committed | AttackId " .. self:IdText(attackId))
-    self:Schedule(attack)
-    return true
-end
-
-function AutoDodgeController:Active(attacker, attackId)
-    local attack = self.Current[attacker]
-    if not attack or attack.AttackId ~= attackId or attack.State ~= "Committed" then return false end
-    attack.State = "Active"
-    return true
-end
-
-function AutoDodgeController:Finish(attacker, attackId)
-    local attack = self.Current[attacker]
-    if not attack or attack.AttackId ~= attackId then return false end
-    attack.State = "Recovery"
-    attack.Committed = false
-    attack.Revision += 1
-    self.Scheduled[attackId] = nil
-    self.Current[attacker] = nil
-    return true
-end
-
-function AutoDodgeController:MarkHandled(attackId)
-    if self.Handled[attackId] then return end
-    self.Handled[attackId] = true
-    table.insert(self.HandledOrder, attackId)
-    if #self.HandledOrder > 256 then
-        local expired = table.remove(self.HandledOrder, 1)
-        self.Handled[expired] = nil
-    end
-end
-
-function AutoDodgeController:Schedule(attack)
-    if self.Handled[attack.AttackId] then return end
-    local revision = attack.Revision
-    local generation = self.Generation
-    local scheduledImpactTime = attack.ImpactTime
-    self.Scheduled[attack.AttackId] = revision
-    local lead = tonumber(self.Settings.LatencyCompensation) or 0.045
-    local startup = tonumber(self.Settings.DodgeStartupTime) or 0
-    local executeAt = attack.ImpactTime - lead - startup
-    local remaining = attack.ImpactTime - self.Options.Now()
-    self:Log("Impact in " .. tostring(math.max(0, math.floor(remaining * 1000 + 0.5))) .. " ms")
-    self:Log("Dodge scheduled | AttackId " .. self:IdText(attack.AttackId))
-
-    local function execute()
-        if not self.Enabled or self.Generation ~= generation then return end
-        local current = self.Current[attack.Attacker]
-        if not current or current.AttackId ~= attack.AttackId then
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | stale AttackId")
-            return
-        end
-        if self.Scheduled[attack.AttackId] ~= revision or current.Revision ~= revision then
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | stale schedule")
-            return
-        end
-        if current.ImpactTime ~= scheduledImpactTime then
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | stale ImpactTime")
-            return
-        end
-        if current.State ~= "Committed" and current.State ~= "Active" then
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | " .. string.lower(current.State))
-            return
-        end
-        local now = self.Options.Now()
-        if now + 0.002 < executeAt then
-            self.Options.Delay(executeAt - now, execute)
-            return
-        end
-        if self.Handled[attack.AttackId] then return end
-        local canHit, hitReason = self.Options.CanHit(current)
-        if not canHit then
-            self.Scheduled[attack.AttackId] = nil
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | " .. (hitReason or "out of range"))
-            return
-        end
-        local canDodge, dodgeReason = self.Options.CanDodge(current)
-        if not canDodge then
-            self.Scheduled[attack.AttackId] = nil
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | " .. (dodgeReason or "dodge unavailable"))
-            return
-        end
-        local ok, result = pcall(self.Options.Dodge, current)
-        if not ok or result == false then
-            self.Scheduled[attack.AttackId] = nil
-            self:Log("Ignore " .. self:IdText(attack.AttackId) .. " | dodge failed")
-            return
-        end
-        self:MarkHandled(attack.AttackId)
-        self.Scheduled[attack.AttackId] = nil
-        self:Log("Dodge request sent | AttackId " .. self:IdText(attack.AttackId))
-    end
-
-    self.Options.Delay(math.max(0, executeAt - self.Options.Now()), execute)
-end
-
-return AutoDodgeController
-]====],
-    ["games/UntitledBoxingGame"] = [====[
-local UntitledBoxingGame = {}
-UntitledBoxingGame.__index = UntitledBoxingGame
-
-local function valueOf(instance)
+local function basePart(instance)
     if not instance then return nil end
-    local ok, value = pcall(function() return instance.Value end)
-    return ok and value or nil
+    if instance:IsA("BasePart") then return instance end
+    local primary = instance:IsA("Model") and instance.PrimaryPart
+    if primary then return primary end
+    local material = instance:FindFirstChild("defaultMaterial", true)
+    if material and material:IsA("BasePart") then return material end
+    return instance:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function humanoidRoot(character)
-    return character and character:FindFirstChild("HumanoidRootPart")
+local function teamContains(player, name)
+    local team = player and player.Team
+    return team and string.find(string.lower(team.Name), name, 1, true) ~= nil
 end
 
-local function isEffectHelper(value)
-    return type(value) == "table"
-        and type(rawget(value, "AttackTrail")) == "function"
-        and type(rawget(value, "StartupHighlight")) == "function"
-end
-
-local function executorEnvironment()
-    local environment = _G
-    if type(getgenv) == "function" then
-        local ok, result = pcall(getgenv)
-        if ok and type(result) == "table" then environment = result end
-    end
-    return environment
-end
-
-local function tracebackError(message)
-    local text = tostring(message)
-    if type(debug) == "table" and type(debug.traceback) == "function" then
-        return debug.traceback(text, 2)
-    end
-    return text
-end
-
-local function callWithThreadIdentity(callback)
-    local environment = executorEnvironment()
-    local setIdentity = environment.setthreadidentity or environment.set_thread_identity
-        or environment.setthreadcontext or environment.set_thread_context
-        or setthreadidentity or set_thread_identity or setthreadcontext or set_thread_context
-    local getIdentity = environment.getthreadidentity or environment.get_thread_identity
-        or environment.getthreadcontext or environment.get_thread_context
-        or getthreadidentity or get_thread_identity or getthreadcontext or get_thread_context
-    local previous
-    if type(getIdentity) == "function" then pcall(function() previous = getIdentity() end) end
-    if type(setIdentity) == "function" then pcall(setIdentity, 8) end
-    local ok, result = pcall(callback)
-    if type(setIdentity) == "function" and previous ~= nil then pcall(setIdentity, previous) end
-    return ok, result
-end
-
-local function fullName(instance)
-    return instance and instance:GetFullName() or "<missing>"
-end
-
-local function isCombatEventName(value)
-    return value == "AttackTrail" or value == "StartupHighlight"
-end
-
-local function findCombatPayload(value, depth, seen)
-    if type(value) ~= "table" or depth > 2 or seen[value] then return nil end
-    seen[value] = true
-    local eventName = value.Event or value.Type or value.StateEvent or value[1]
-    if isCombatEventName(eventName) then return value, eventName end
-    local inspected = 0
-    for _, nested in pairs(value) do
-        inspected += 1
-        if inspected > 24 then break end
-        if isCombatEventName(nested) then return value, nested end
-        local result, nestedEventName = findCombatPayload(nested, depth + 1, seen)
-        if result then return result, nestedEventName end
-    end
-    return nil
-end
-
-local function bufferShape(value)
-    if typeof(value) ~= "buffer" then return nil end
-    local ok, result = pcall(function()
-        local length = buffer.len(value)
-        local bytes = {}
-        for offset = 0, math.min(length, 16) - 1 do
-            table.insert(bytes, string.format("%02X", buffer.readu8(value, offset)))
-        end
-        return "buffer(len=" .. tostring(length) .. ",hex=" .. table.concat(bytes, " ")
-            .. (length > 16 and " ..." or "") .. ")"
-    end)
-    return ok and result or "buffer(unreadable)"
-end
-
-local function bufferFingerprint(value)
-    if typeof(value) ~= "buffer" then return nil end
-    local ok, result = pcall(function()
-        local length = buffer.len(value)
-        local bytes, printable = {}, {}
-        for offset = 0, math.min(length, 96) - 1 do
-            local byte = buffer.readu8(value, offset)
-            table.insert(bytes, string.format("%02X", byte))
-            table.insert(printable, byte >= 32 and byte <= 126 and string.char(byte) or ".")
-        end
-        return "len=" .. tostring(length) .. " hex=" .. table.concat(bytes, " ")
-            .. " ascii=" .. table.concat(printable)
-    end)
-    return ok and result or "unreadable buffer"
-end
-
-local function shortValue(value)
-    local kind = typeof(value)
-    if kind == "string" then
-        local clean = string.gsub(value, "%c", "?")
-        return "\"" .. string.sub(clean, 1, 28) .. (#clean > 28 and "..." or "") .. "\""
-    end
-    if kind == "number" or kind == "boolean" then return tostring(value) end
-    if kind == "Instance" then return value.ClassName .. "(" .. value.Name .. ")" end
-    if kind == "buffer" then return bufferShape(value) end
-    return kind
-end
-
-local function valueShape(value)
-    local kind = typeof(value)
-    if kind == "string" then
-        local clean = string.gsub(value, "%c", "?")
-        return "string(" .. string.sub(clean, 1, 24) .. ")"
-    end
-    if kind == "number" or kind == "boolean" then return kind .. "(" .. tostring(value) .. ")" end
-    if kind == "Instance" then return value.ClassName .. "(" .. fullName(value) .. ")" end
-    if kind == "buffer" then return bufferShape(value) end
-    if type(value) == "table" then
-        local entries, count = {}, 0
-        for key, nested in pairs(value) do
-            count += 1
-            if count <= 6 then table.insert(entries, tostring(key) .. "=" .. shortValue(nested)) end
-        end
-        return "table{" .. table.concat(entries, ",") .. (count > 6 and ",..." or "") .. "}"
-    end
-    return kind
-end
-
-local function characterFromInstance(value)
-    if typeof(value) ~= "Instance" then return nil end
-    if value:IsA("Player") then return value.Character end
-    if value:IsA("Model") and value:FindFirstChildOfClass("Humanoid") then return value end
-    local model = value:FindFirstAncestorOfClass("Model")
-    return model and model:FindFirstChildOfClass("Humanoid") and model or nil
-end
-
-local function findCharacterInValue(value, localCharacter, depth, seen)
-    local direct = characterFromInstance(value)
-    if direct and direct ~= localCharacter then return direct end
-    if type(value) ~= "table" or depth >= 3 or seen[value] then return nil end
-    seen[value] = true
-    local inspected = 0
-    for _, nested in pairs(value) do
-        inspected += 1
-        if inspected > 40 then break end
-        local character = findCharacterInValue(nested, localCharacter, depth + 1, seen)
-        if character then return character end
-    end
-    return nil
-end
-
-local function containsCharacter(value, target, depth, seen)
-    if not target then return false end
-    if characterFromInstance(value) == target then return true end
-    if type(value) ~= "table" or depth >= 3 or seen[value] then return false end
-    seen[value] = true
-    local inspected = 0
-    for _, nested in pairs(value) do
-        inspected += 1
-        if inspected > 40 then break end
-        if containsCharacter(nested, target, depth + 1, seen) then return true end
-    end
-    return false
-end
-
-local function normalizedCombatPayload(payload, eventName)
-    if type(payload) ~= "table" then return nil end
-    if isCombatEventName(payload.Event or payload.Type or payload.StateEvent or payload[1]) then return payload end
-    local normalized = {}
-    for key, value in pairs(payload) do normalized[key] = value end
-    normalized.Event = eventName
-    normalized.SourcePayload = payload
-    return normalized
-end
-
-function UntitledBoxingGame.new(ctx)
+function ViolenceDistrict.new(ctx)
     local self = setmetatable({
         ctx = ctx,
-        Enabled = false,
-        Debug = false,
-        LatencyCompensation = 0.045,
-        DodgeStartupTime = 0,
-        FallbackRange = 9.9,
-        OnlyLockedOpponent = true,
-        Hooks = {},
-        SeenEffects = setmetatable({}, {__mode = "k"}),
-        TransitionFrom = setmetatable({}, {__mode = "k"}),
-    }, UntitledBoxingGame)
+        KillerESP = false,
+        GeneratorESP = false,
+        AutoReaction = false,
+        Elapsed = 0,
+        Generators = {},
+        ReactionTriggered = false,
+        ReactionTouchId = 8822,
+    }, ViolenceDistrict)
 
-    local page = ctx.Window:AddPage("Untitled Boxing Game", "M1/M2 Auto Dodge через внутренний combat flow")
+    local RoleChams = ctx.LoadModule("games/RoleChams")
+    self.KillerChams = RoleChams.new("BezNigativaVDKiller")
+    self.GeneratorChams = RoleChams.new("BezNigativaVDGenerator")
+
+    local page = ctx.Window:AddPage("VIOLENCE DISTRICT", "Killer ESP, Generator ESP и Auto Reaction")
     local stack = ctx.Window:ModuleStack(page, 70)
-    local module = stack:Add("Auto Dodge", 450)
-    self.EnabledControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
-        self:SetEnabled(value)
+
+    local killer = stack:Add("Подсветка маньяка", 126)
+    self.KillerESPControl = ctx.Window:Toggle(killer.Settings, UDim2.fromOffset(10, 4), 260, "Красная подсветка", false, function(value)
+        self.KillerESP = value
+        if not value then self.KillerChams:Clear() end
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
-    self.DebugControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(240, 4), 220, "Debug", false, function(value)
-        self.Debug = value
+    self:AddHint(killer.Settings, "Показывает игрока из команды Killer сквозь стены.")
+
+    local generators = stack:Add("Подсветка генераторов", 126)
+    self.GeneratorESPControl = ctx.Window:Toggle(generators.Settings, UDim2.fromOffset(10, 4), 260, "Генераторы", false, function(value)
+        self.GeneratorESP = value
+        if not value then self.GeneratorChams:Clear() end
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
-    self.LatencyControl = ctx.Window:Slider(module.Settings, 48, "Lead (ms)", 45, 0, 60, 1, function(value)
-        self.LatencyCompensation = value / 1000
+    self:AddHint(generators.Settings, "Жёлтый — требует починки; зелёный — завершён.")
+
+    local reaction = stack:Add("Auto Reaction", 126)
+    self.AutoReactionControl = ctx.Window:Toggle(reaction.Settings, UDim2.fromOffset(10, 4), 260, "Реакция генератора", false, function(value)
+        self.AutoReaction = value
+        self.ReactionTriggered = false
+        self:RefreshHeartbeat()
         ctx.Touch()
     end)
-    self.RangeControl = ctx.Window:Slider(module.Settings, 88, "Fallback range", 9.9, 4, 15, 0.1, function(value)
-        self.FallbackRange = value
-        ctx.Touch()
+    self:AddHint(reaction.Settings, "Автоматически нажимает реакцию в зелёной зоне во время починки.")
+
+    ctx.Janitor:Add(function()
+        if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
     end)
-    self.LockedControl = ctx.Window:Toggle(module.Settings, UDim2.fromOffset(10, 128), 260, "Only locked opponent", true, function(value)
-        self.OnlyLockedOpponent = value
-        ctx.Touch()
-    end)
-
-    local hint = Instance.new("TextLabel")
-    hint.Position = UDim2.fromOffset(10, 172)
-    hint.Size = UDim2.new(1, -20, 0, 42)
-    hint.BackgroundTransparency = 1
-    hint.Font = Enum.Font.Code
-    hint.Text = "AttackTrail = timing/hit window; StartupHighlight = M1/M2 commit или cancel.\nБез AnimationId и таблиц boxing styles."
-    hint.TextWrapped = true
-    hint.TextColor3 = Color3.fromRGB(165, 165, 165)
-    hint.TextSize = 12
-    hint.TextXAlignment = Enum.TextXAlignment.Left
-    hint.TextYAlignment = Enum.TextYAlignment.Top
-    hint.Parent = module.Settings
-
-    local status = Instance.new("TextLabel")
-    status.Position = UDim2.fromOffset(10, 220)
-    status.Size = UDim2.new(1, -20, 0, 28)
-    status.BackgroundTransparency = 1
-    status.Font = Enum.Font.Code
-    status.Text = "Status: disabled"
-    status.TextColor3 = Color3.fromRGB(185, 185, 185)
-    status.TextSize = 12
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.Parent = module.Settings
-    self.Status = status
-
-    local diagnostics = Instance.new("ScrollingFrame")
-    diagnostics.Position = UDim2.fromOffset(10, 252)
-    diagnostics.Size = UDim2.new(1, -20, 0, 116)
-    diagnostics.BackgroundColor3 = Color3.fromRGB(29, 29, 29)
-    diagnostics.BorderSizePixel = 0
-    diagnostics.ScrollBarThickness = 5
-    diagnostics.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    diagnostics.CanvasSize = UDim2.fromOffset(0, 0)
-    diagnostics.ScrollingDirection = Enum.ScrollingDirection.Y
-    diagnostics.Parent = module.Settings
-
-    local diagnosticLabel = Instance.new("TextLabel")
-    diagnosticLabel.Position = UDim2.fromOffset(6, 5)
-    diagnosticLabel.Size = UDim2.new(1, -14, 0, 0)
-    diagnosticLabel.AutomaticSize = Enum.AutomaticSize.Y
-    diagnosticLabel.BackgroundTransparency = 1
-    diagnosticLabel.Font = Enum.Font.Code
-    diagnosticLabel.Text = "Включи Auto Dodge для запуска диагностики."
-    diagnosticLabel.TextWrapped = true
-    diagnosticLabel.TextColor3 = Color3.fromRGB(190, 190, 190)
-    diagnosticLabel.TextSize = 11
-    diagnosticLabel.TextXAlignment = Enum.TextXAlignment.Left
-    diagnosticLabel.TextYAlignment = Enum.TextYAlignment.Top
-    diagnosticLabel.Parent = diagnostics
-    self.DiagnosticLabel = diagnosticLabel
-
-    self.CopyButton = ctx.Window:Button(module.Settings, UDim2.fromOffset(10, 376), UDim2.fromOffset(220, 30), "Copy diagnostics", function()
-        self:CopyDiagnostics()
-    end)
-    self.RetryButton = ctx.Window:Button(module.Settings, UDim2.fromOffset(240, 376), UDim2.fromOffset(220, 30), "Retry", function()
-        self:SetEnabled(true)
-        self.EnabledControl.Set(self.Enabled)
-        ctx.Touch()
-    end)
-
-    local Controller = ctx.LoadModule("games/AutoDodgeController")
-    self.Controller = Controller.new({
-        Settings = self,
-        Now = function() return ctx.Workspace:GetServerTimeNow() end,
-        Delay = function(delay, callback) task.delay(delay, callback) end,
-        CanHit = function(attack) return self:CanAttackHit(attack) end,
-        CanDodge = function(attack) return self:CanDodge(attack) end,
-        Dodge = function(attack) return self:ExecuteDodge(attack) end,
-        Log = function(message) self:AddDiagnostic(message, false) end,
-    })
     return self
 end
 
-function UntitledBoxingGame:SetStatus(text, errorState)
-    if not self.Status then return end
-    self.Status.Text = "Status: " .. text
-    self.Status.TextColor3 = errorState and Color3.fromRGB(255, 115, 115) or Color3.fromRGB(185, 220, 185)
+function ViolenceDistrict:AddHint(parent, text)
+    local hint = Instance.new("TextLabel")
+    hint.Position = UDim2.fromOffset(10, 48)
+    hint.Size = UDim2.new(1, -20, 0, 38)
+    hint.BackgroundTransparency = 1
+    hint.Font = Enum.Font.Code
+    hint.Text, hint.TextWrapped = text, true
+    hint.TextColor3 = Color3.fromRGB(165, 165, 165)
+    hint.TextSize = 12
+    hint.TextXAlignment = Enum.TextXAlignment.Left
+    hint.Parent = parent
 end
 
-function UntitledBoxingGame:ResetDiagnostics()
-    self.DiagnosticLines = {}
-    self.LastDiagnostic = ""
-    if self.DiagnosticLabel then self.DiagnosticLabel.Text = "Диагностика запущена..." end
-end
-
-function UntitledBoxingGame:AddDiagnostic(message, errorState)
-    local text = tostring(message)
-    self.DiagnosticLines = self.DiagnosticLines or {}
-    table.insert(self.DiagnosticLines, text)
-    while #self.DiagnosticLines > 30 do table.remove(self.DiagnosticLines, 1) end
-    self.LastDiagnostic = table.concat(self.DiagnosticLines, "\n\n")
-    if #self.LastDiagnostic > 12000 then self.LastDiagnostic = string.sub(self.LastDiagnostic, -12000) end
-    if self.DiagnosticLabel then
-        self.DiagnosticLabel.Text = self.LastDiagnostic
-        self.DiagnosticLabel.TextColor3 = errorState and Color3.fromRGB(255, 145, 145) or Color3.fromRGB(190, 210, 190)
-    end
-    if errorState then warn("[BezNigativa/UBG] " .. text) else print("[BezNigativa/UBG] " .. text) end
-end
-
-function UntitledBoxingGame:CopyDiagnostics()
-    local environment = _G
-    if type(getgenv) == "function" then
-        local ok, result = pcall(getgenv)
-        if ok and type(result) == "table" then environment = result end
-    end
-    local copy = environment.setclipboard or environment.toclipboard or setclipboard or toclipboard
-    if type(copy) ~= "function" then
-        self:AddDiagnostic("Clipboard API недоступен. Сделай скриншот блока диагностики.", true)
-        return
-    end
-    local ok, message = xpcall(function() copy(self.LastDiagnostic or "") end, tracebackError)
-    if not ok then
-        self:AddDiagnostic("Не удалось скопировать диагностику:\n" .. tostring(message), true)
-        return
-    end
-    if self.CopyButton then
-        self.CopyButton.Text = "Copied"
-        task.delay(1.2, function()
-            if self.CopyButton and self.CopyButton.Parent then self.CopyButton.Text = "Copy diagnostics" end
+function ViolenceDistrict:RefreshHeartbeat()
+    local active = self.KillerESP or self.GeneratorESP or self.AutoReaction
+    if active and not self.HeartbeatLoop then
+        self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+            local ok, message = pcall(function() self:Heartbeat(delta) end)
+            if not ok and not self.Warned then
+                self.Warned = true
+                warn("[BezNigativa/ViolenceDistrict] " .. tostring(message))
+            end
         end)
+    elseif not active and self.HeartbeatLoop then
+        self.HeartbeatLoop:Disconnect()
+        self.HeartbeatLoop = nil
     end
 end
 
-function UntitledBoxingGame:SetEnabled(value)
-    self.Enabled = value == true
-    self.Controller:SetEnabled(self.Enabled)
-    if self.Enabled then
-        self:ResetDiagnostics()
-        self.CombatConfirmed = false
-        self.AttackSequence = 0
-        self.TransitionFrom = setmetatable({}, {__mode = "k"})
-        self.TryAttackSequenceByAttacker = setmetatable({}, {__mode = "k"})
-        self.TryAttackFallbackReported = false
-        self.TryAttackMissingAttackerWarning = false
-        self.TryAttackStateWarning = false
-        self.TryAttackFingerprintCount = 0
-        self.DodgeInputReported = false
-        self.DodgeAttemptSequence = 0
-        self.DodgeAttemptConfirmed = false
-        self.NextDodgeAt = 0
-        self:SetStatus("Initializing...", false)
-        local ok, message = self:InstallHooks()
-        if ok then
-            self.Initialized = true
-            self:SetStatus(self.CombatConfirmed and "Ready" or "Listening: waiting for first attack", false)
-        else
-            self.Initialized = false
-            self.Enabled = false
-            self.Controller:SetEnabled(false)
-            self.EnabledControl.Set(false)
-            self:SetStatus("ERROR: " .. tostring(message or "initialization failed"), true)
-        end
-    else
-        self.Initialized = false
-        self:UninstallHooks()
-        self:SetStatus("disabled", false)
-    end
-end
-
-function UntitledBoxingGame:FindEffectHelperModule()
-    local storage = self.ctx.ReplicatedStorage
-    local modules = storage:FindFirstChild("Modules")
-    local expected = modules and modules:FindFirstChild("EffectHelper")
-    if expected and expected:IsA("ModuleScript") then return expected, true end
-    for _, candidate in ipairs(storage:GetDescendants()) do
-        if candidate:IsA("ModuleScript") and candidate.Name == "EffectHelper" then return candidate, false end
-    end
-    return nil, false
-end
-
-function UntitledBoxingGame:RequireLoadedEffectHelper(moduleScript)
-    if not moduleScript then return nil, "module missing" end
-    local environment = executorEnvironment()
-    local getLoaded = environment.getloadedmodules or environment.get_loaded_modules
-        or getloadedmodules or get_loaded_modules
-    if type(getLoaded) ~= "function" then return nil, "executor does not expose getloadedmodules" end
-    local ok, modules = pcall(getLoaded)
-    if not ok or type(modules) ~= "table" then return nil, "getloadedmodules failed: " .. tostring(modules) end
-    local loaded = false
-    for _, candidate in pairs(modules) do
-        if candidate == moduleScript then loaded = true; break end
-    end
-    if not loaded then return nil, "EffectHelper is not in the loaded module cache" end
-
-    local requireFunction = environment.require or require
-    if type(requireFunction) ~= "function" then return nil, "require unavailable" end
-    local required, result = callWithThreadIdentity(function() return requireFunction(moduleScript) end)
-    if required and isEffectHelper(result) then return result, "loaded ModuleScript cache" end
-    if required then return nil, "loaded EffectHelper returned " .. type(result) .. " without required handlers" end
-    return nil, "loaded EffectHelper require failed: " .. tostring(result)
-end
-
-function UntitledBoxingGame:FindLoadedEffectHelper()
-    local environment = executorEnvironment()
-    local getGarbage = environment.getgc or getgc
-    if type(getGarbage) ~= "function" then return nil, "executor does not expose getgc" end
-    local snapshots, diagnostics = {}, {}
-    local okTrue, objectsTrue = xpcall(function() return getGarbage(true) end, tracebackError)
-    if okTrue and type(objectsTrue) == "table" then table.insert(snapshots, objectsTrue)
-    else table.insert(diagnostics, "getgc(true): " .. tostring(objectsTrue)) end
-    local okDefault, objectsDefault = xpcall(function() return getGarbage() end, tracebackError)
-    if okDefault and type(objectsDefault) == "table" and objectsDefault ~= objectsTrue then
-        table.insert(snapshots, objectsDefault)
-    elseif not okDefault then
-        table.insert(diagnostics, "getgc(): " .. tostring(objectsDefault))
-    end
-
-    local tableCount, functionCount, upvalueCount = 0, 0, 0
-    local graphStats = {Visited = 0, Tables = 0, Functions = 0, Upvalues = 0, Limit = 6000}
-    local graphSeen = {}
-    for _, objects in ipairs(snapshots) do
-        for _, candidate in pairs(objects) do
-            if type(candidate) == "table" then
-                tableCount += 1
-                local helper = self:FindEffectHelperInGraph(candidate, 0, graphSeen, graphStats)
-                if helper then return helper end
-            end
+function ViolenceDistrict:ScanKillers()
+    local seen = {}
+    for _, player in ipairs(self.ctx.Players:GetPlayers()) do
+        if player ~= self.ctx.LocalPlayer and teamContains(player, "killer") and player.Character then
+            self.KillerChams:Show(player.Character, KILLER_RED, seen)
         end
     end
-    for _, objects in ipairs(snapshots) do
-        for _, candidate in pairs(objects) do
-            if type(candidate) == "function" and functionCount < 1500 then
-                functionCount += 1
-                if functionCount % 250 == 0 then task.wait() end
-                local helper = self:FindEffectHelperInGraph(candidate, 0, graphSeen, graphStats)
-                if helper then return helper end
-            end
-        end
-    end
-    upvalueCount = graphStats.Upvalues
-    table.insert(diagnostics, "scanned getgc tables=" .. tostring(tableCount) .. ", functions=" .. tostring(functionCount)
-        .. ", readable upvalues=" .. tostring(upvalueCount)
-        .. ", graph=" .. tostring(graphStats.Visited) .. " nodes")
-    return nil, table.concat(diagnostics, "\n")
+    self.KillerChams:Finish(seen)
 end
 
-function UntitledBoxingGame:GetFunctionUpvalues(callback)
-    local environment = executorEnvironment()
-    local getter = environment.getupvalues
-    if type(getter) ~= "function" and type(debug) == "table" then getter = debug.getupvalues end
-    if type(getter) == "function" then
-        local ok, values = xpcall(function() return getter(callback) end, tracebackError)
-        if ok and type(values) == "table" then return values end
-    end
-    local getOne = environment.getupvalue
-    if type(getOne) ~= "function" and type(debug) == "table" then getOne = debug.getupvalue end
-    if type(getOne) ~= "function" then return nil end
-    local values = {}
-    for index = 1, 40 do
-        local ok, name, value = pcall(getOne, callback, index)
-        if not ok or name == nil then break end
-        if value == nil and type(name) ~= "string" then values[index] = name
-        else values[name] = value end
-    end
-    return values
+function ViolenceDistrict:IsGenerator(item)
+    if not item:IsA("Model") then return false end
+    return item.Name == "Generator" or item:GetAttribute("RepairProgress") ~= nil
 end
 
-function UntitledBoxingGame:FindEffectHelperInGraph(value, depth, seen, stats)
-    if isEffectHelper(value) then return value end
-    local kind = type(value)
-    if (kind ~= "table" and kind ~= "function") or depth > 8 or seen[value] then return nil end
-    if stats.Visited >= stats.Limit then return nil end
-    seen[value] = true
-    stats.Visited += 1
-    if stats.Visited % 400 == 0 then task.wait() end
-
-    if kind == "function" then
-        stats.Functions += 1
-        local values = self:GetFunctionUpvalues(value)
-        if type(values) ~= "table" then return nil end
-        stats.Upvalues += 1
-        local inspected = 0
-        for _, nested in pairs(values) do
-            inspected += 1
-            if inspected > 64 then break end
-            local found = self:FindEffectHelperInGraph(nested, depth + 1, seen, stats)
-            if found then return found end
-        end
-        return nil
-    end
-
-    stats.Tables += 1
-    local inspected = 0
-    for _, nested in pairs(value) do
-        inspected += 1
-        if inspected > 128 then break end
-        local found = self:FindEffectHelperInGraph(nested, depth + 1, seen, stats)
-        if found then return found end
-    end
-    return nil
-end
-
-function UntitledBoxingGame:FindEffectHelperFromConnections()
-    local environment = executorEnvironment()
-    local getConnections = environment.getconnections or getconnections
-    if type(getConnections) ~= "function" then return nil, "executor does not expose getconnections" end
-    local remoteCount, connectionCount, functionCount = 0, 0, 0
-    local graphStats = {Visited = 0, Tables = 0, Functions = 0, Upvalues = 0, Limit = 12000}
-    local graphSeen = {}
-    for _, remote in ipairs(self.ctx.ReplicatedStorage:GetDescendants()) do
-        if self:IsClientRemote(remote) then
-            remoteCount += 1
-            local ok, connections = xpcall(function() return getConnections(remote.OnClientEvent) end, tracebackError)
-            if ok and type(connections) == "table" then
-                for _, connection in pairs(connections) do
-                    connectionCount += 1
-                    local readOk, callback = pcall(function() return connection.Function end)
-                    if readOk and type(callback) == "function" then
-                        functionCount += 1
-                        local helper = self:FindEffectHelperInGraph(callback, 0, graphSeen, graphStats)
-                        if helper then return helper, fullName(remote) .. " callback graph" end
-                    end
+function ViolenceDistrict:ScanGenerators()
+    local map = self.ctx.Workspace:FindFirstChild("Map")
+    local seen, generators = {}, {}
+    if map then
+        for _, item in ipairs(map:GetDescendants()) do
+            if self:IsGenerator(item) then
+                table.insert(generators, item)
+                if self.GeneratorESP then
+                    local progress = tonumber(item:GetAttribute("RepairProgress") or item:GetAttribute("Progress")) or 0
+                    self.GeneratorChams:Show(item, progress >= 100 and GENERATOR_GREEN or GENERATOR_YELLOW, seen)
                 end
             end
         end
     end
-    return nil, "scanned remotes=" .. tostring(remoteCount) .. ", connections=" .. tostring(connectionCount)
-        .. ", readable callbacks=" .. tostring(functionCount)
-        .. ", graph nodes=" .. tostring(graphStats.Visited)
-        .. ", functions=" .. tostring(graphStats.Functions)
-        .. ", upvalue sets=" .. tostring(graphStats.Upvalues)
+    self.Generators = generators
+    if self.GeneratorESP then self.GeneratorChams:Finish(seen) end
 end
 
-function UntitledBoxingGame:ResolveEffectHelper()
-    if isEffectHelper(self.EffectHelper) then return self.EffectHelper, self.EffectHelperSource end
-
-    local moduleScript, expectedPath = self:FindEffectHelperModule()
-    if moduleScript then
-        self:AddDiagnostic("EffectHelper ModuleScript: " .. fullName(moduleScript), false)
-        if not expectedPath then
-            self:AddDiagnostic("Ожидался ReplicatedStorage.Modules.EffectHelper, найден другой путь: " .. fullName(moduleScript), true)
-        end
-    else
-        self:AddDiagnostic("EffectHelper ModuleScript отсутствует в ReplicatedStorage. Ожидался путь ReplicatedStorage.Modules.EffectHelper", true)
-    end
-
-    local cached, cachedError = self:RequireLoadedEffectHelper(moduleScript)
-    if cached then
-        self.EffectHelper, self.EffectHelperSource = cached, "loaded ModuleScript cache"
-        self:AddDiagnostic("EffectHelper API получен из уже загруженного ModuleScript cache.", false)
-        return cached, self.EffectHelperSource
-    end
-
-    local loaded, getGcError = self:FindLoadedEffectHelper()
-    if loaded then
-        self.EffectHelper, self.EffectHelperSource = loaded, "getgc"
-        self:AddDiagnostic("EffectHelper API найден в уже загруженной combat-таблице (getgc).", false)
-        return loaded, self.EffectHelperSource
-    end
-
-    local connectionHelper, connectionSource = self:FindEffectHelperFromConnections()
-    if connectionHelper then
-        self.EffectHelper, self.EffectHelperSource = connectionHelper, "OnClientEvent upvalue"
-        self:AddDiagnostic("EffectHelper API найден в upvalue игрового OnClientEvent.\nRemote: " .. tostring(connectionSource), false)
-        return connectionHelper, self.EffectHelperSource
-    end
-
-    self:AddDiagnostic("Загруженный EffectHelper API недоступен: " .. tostring(getGcError)
-        .. "\nUpvalue scan: " .. tostring(connectionSource)
-        .. "\nLoaded-module cache: " .. tostring(cachedError)
-        .. "\nПовторный прямой require не выполняется: он заново запускает игровые зависимости."
-        .. "\nПереключаюсь на входящий combat RemoteEvent.", false)
-    return nil, "RemoteEvent fallback"
-end
-
-function UntitledBoxingGame:IsClientRemote(instance)
-    return instance:IsA("RemoteEvent") or instance.ClassName == "UnreliableRemoteEvent"
-end
-
-function UntitledBoxingGame:ConfirmCombatFlow(source)
-    if self.CombatConfirmed then return end
-    self.CombatConfirmed = true
-    self:SetStatus("Ready", false)
-    self:AddDiagnostic("Combat flow подтверждён через " .. tostring(source) .. ".", false)
-end
-
-function UntitledBoxingGame:RecordRemoteSample(remote, arguments)
-    self.RemoteSamples = self.RemoteSamples or setmetatable({}, {__mode = "k"})
-    if self.RemoteSamples[remote] or (self.RemoteSampleCount or 0) >= 8 then return end
-    self.RemoteSamples[remote] = true
-    self.RemoteSampleCount = (self.RemoteSampleCount or 0) + 1
-    local shapes = {}
-    for index = 1, math.min(arguments.n, 6) do
-        table.insert(shapes, tostring(index) .. "=" .. valueShape(arguments[index]))
-    end
-    self:AddDiagnostic("Remote sample " .. fullName(remote) .. " | args=" .. tostring(arguments.n)
-        .. " | " .. table.concat(shapes, " ; "), false)
-end
-
-function UntitledBoxingGame:InspectRemotePayload(remote, ...)
-    local arguments = table.pack(...)
-    if isCombatEventName(arguments[1]) then
-        local payload = {}
-        for index = 1, arguments.n do payload[index] = arguments[index] end
-        payload.Event = arguments[1]
-        payload.Attacker = findCharacterInValue(arguments, self.ctx.LocalPlayer.Character, 0, {})
-        if not self.ObservedCombatRemote then self.ObservedCombatRemote = remote end
-        self:ConfirmCombatFlow(fullName(remote))
-        self:OnCombatEffect(payload)
-        return
-    end
-    for index = 1, arguments.n do
-        local payload, eventName = findCombatPayload(arguments[index], 0, {})
-        if payload then
-            payload = normalizedCombatPayload(payload, eventName)
-            payload.Attacker = payload.Attacker
-                or findCharacterInValue(arguments[index], self.ctx.LocalPlayer.Character, 0, {})
-                or findCharacterInValue(arguments, self.ctx.LocalPlayer.Character, 0, {})
-            if not self.ObservedCombatRemote then self.ObservedCombatRemote = remote end
-            self:ConfirmCombatFlow(fullName(remote))
-            self:OnCombatEffect(payload)
-            return
-        end
-    end
-    if remote.Name == "ReplicateTryAttack" then
-        self:OnReplicateTryAttack(remote, arguments)
-    end
-end
-
-function UntitledBoxingGame:InferAttackFromState(attacker)
-    local folder = self:StateFolder(attacker)
-    if not folder then return nil, nil end
-    local now = self.ctx.Workspace:GetServerTimeNow()
-    local attackType, impactTime
-
-    local function inspect(name, value)
-        local normalizedName = string.lower(tostring(name)):gsub("[^%w]", "")
-        if type(value) == "string" then
-            local normalizedValue = string.lower(value):gsub("[^%w]", "")
-            if normalizedValue == "m2" or normalizedValue == "heavy" or normalizedValue == "heavyattack" then
-                attackType = "M2"
-            elseif normalizedValue == "m1" or normalizedValue == "light" or normalizedValue == "lightattack" then
-                attackType = attackType or "M1"
-            end
-        elseif value == true or (type(value) == "number" and value ~= 0) then
-            if normalizedName == "m2" or normalizedName == "heavy" or normalizedName == "heavyattack"
-                or normalizedName == "chargingheavy" then
-                attackType = "M2"
-            elseif normalizedName == "m1" or normalizedName == "light" or normalizedName == "lightattack" then
-                attackType = attackType or "M1"
-            end
-        end
-
-        local number = tonumber(value)
-        if not number then return end
-        if normalizedName == "impacttime" or normalizedName == "hittime" or normalizedName == "activetime"
-            or normalizedName == "attackimpacttime" then
-            impactTime = number > now - 1 and number or now + math.max(0, number)
-        elseif normalizedName == "timeuntilimpact" or normalizedName == "impactdelay"
-            or normalizedName == "attackdelay" or normalizedName == "windup" then
-            if number >= 0 and number <= 5 then impactTime = now + number end
-        end
-    end
-
-    for name, value in pairs(folder:GetAttributes()) do inspect(name, value) end
-    for name, value in pairs(attacker:GetAttributes()) do inspect(name, value) end
-    for _, node in ipairs(folder:GetDescendants()) do
-        inspect(node.Name, valueOf(node))
-    end
-    return attackType, impactTime
-end
-
-function UntitledBoxingGame:CombatStateSnapshot(attacker)
-    local folder = self:StateFolder(attacker)
-    if not folder then return "state folder missing" end
-    local rows = {}
-    local function append(name, value)
-        local normalized = string.lower(tostring(name))
-        if not string.find(normalized, "attack", 1, true)
-            and not string.find(normalized, "punch", 1, true)
-            and not string.find(normalized, "heavy", 1, true)
-            and not string.find(normalized, "light", 1, true)
-            and not string.find(normalized, "impact", 1, true)
-            and not string.find(normalized, "active", 1, true)
-            and not string.find(normalized, "recover", 1, true)
-            and normalized ~= "m1" and normalized ~= "m2" then return end
-        table.insert(rows, tostring(name) .. "=" .. tostring(value))
-    end
-    for name, value in pairs(folder:GetAttributes()) do append("@" .. name, value) end
-    for _, node in ipairs(folder:GetDescendants()) do
-        if #rows >= 40 then break end
-        append(node:GetFullName(), valueOf(node))
-    end
-    return #rows > 0 and table.concat(rows, ", ") or "no attack-related state nodes"
-end
-
-function UntitledBoxingGame:OnReplicateTryAttack(remote, arguments)
-    local localCharacter = self.ctx.LocalPlayer.Character
-    local lockedOpponent = self:LockedCharacter(localCharacter)
-    local attacker
-    if self.OnlyLockedOpponent then
-        if not lockedOpponent then return end
-        if not containsCharacter(arguments, lockedOpponent, 0, {}) then return end
-        attacker = lockedOpponent
-    else
-        attacker = findCharacterInValue(arguments, localCharacter, 0, {})
-    end
-    if not attacker then
-        if self.Debug and not self.TryAttackMissingAttackerWarning then
-            self.TryAttackMissingAttackerWarning = true
-            self:AddDiagnostic("ReplicateTryAttack пропущен: в пакете нет Character атакующего.", false)
-        end
-        return
-    end
-
-    self.ObservedCombatRemote = remote
-    self.TryAttackSequenceByAttacker = self.TryAttackSequenceByAttacker or setmetatable({}, {__mode = "k"})
-    local sequence = (self.TryAttackSequenceByAttacker[attacker] or 0) + 1
-    self.TryAttackSequenceByAttacker[attacker] = sequence
-    if not self.TryAttackFallbackReported then
-        self.TryAttackFallbackReported = true
-        self:AddDiagnostic("ReplicateTryAttack распознан: attacker=" .. fullName(attacker)
-            .. ". Ожидаю декодированный AttackTrail/StartupHighlight; непрозрачный buffer не подменяется фиктивным M1.", false)
-    end
-
-    if self.Debug and (self.TryAttackFingerprintCount or 0) < 6 then
-        local fingerprint = bufferFingerprint(type(arguments[1]) == "table" and arguments[1][1] or arguments[1])
-        if fingerprint then
-            self.TryAttackFingerprintCount = (self.TryAttackFingerprintCount or 0) + 1
-            self:AddDiagnostic("ReplicateTryAttack buffer #" .. tostring(self.TryAttackFingerprintCount)
-                .. ": " .. fingerprint, false)
-        end
-    end
-
-    task.defer(function()
-        if not self.Enabled or sequence ~= self.TryAttackSequenceByAttacker[attacker] then return end
-        if not attacker.Parent or attacker == self.ctx.LocalPlayer.Character then return end
-        local now = self.ctx.Workspace:GetServerTimeNow()
-        local current = self.Controller:GetCurrent(attacker)
-        if current and (current.State == "Committed" or current.State == "Active") then return end
-
-        local attackType, impactTime = self:InferAttackFromState(attacker)
-        if current and current.State == "Started" and (attackType or current.AttackType)
-            and (impactTime or current.ImpactTime) then
-            current.AttackType = attackType or current.AttackType
-            current.ImpactTime = impactTime or current.ImpactTime
-            self.Controller:Commit(attacker, current.AttackId, current.AttackType, current.ImpactTime, current.HitboxData)
-            return
-        end
-
-        if attackType and impactTime then
-            self:ConfirmCombatFlow(fullName(remote) .. " + internal state")
-            local attackId = "state:" .. attacker.Name .. "#" .. tostring(sequence)
-            local attack = self.Controller:Start(attacker, attackId, attackType, now, impactTime, {})
-            if attack then
-                attack.SourceStage = "CombatState"
-                self.Controller:Commit(attacker, attackId, attackType, impactTime, {})
-            end
-        elseif self.Debug and not self.TryAttackStateWarning then
-            self.TryAttackStateWarning = true
-            self:AddDiagnostic("Opaque ReplicateTryAttack не содержит публичной схемы M1/M2/ImpactTime. "
-                .. "Снимок внутреннего состояния: " .. self:CombatStateSnapshot(attacker), false)
-            self:SetStatus("Combat seen: waiting for decoded attack state", false)
-        end
-    end)
-end
-
-function UntitledBoxingGame:ConnectCombatRemote(remote)
-    self.RemoteConnections = self.RemoteConnections or setmetatable({}, {__mode = "k"})
-    if self.RemoteConnections[remote] or not self:IsClientRemote(remote) then return false end
-    local connection = remote.OnClientEvent:Connect(function(...)
-        self.RemoteEventsSeen = (self.RemoteEventsSeen or 0) + 1
-        if not self.CombatConfirmed and (self.RemoteEventsSeen <= 3 or self.RemoteEventsSeen % 25 == 0) then
-            self:SetStatus("Listening: " .. tostring(self.RemoteEventsSeen) .. " events / 0 combat", false)
-        end
-        local arguments = table.pack(...)
-        if not self.CombatConfirmed then self:RecordRemoteSample(remote, arguments) end
-        local ok, message = xpcall(function()
-            self:InspectRemotePayload(remote, table.unpack(arguments, 1, arguments.n))
-        end, tracebackError)
-        if not ok and not self.RemoteWarning then
-            self.RemoteWarning = true
-            self:AddDiagnostic("Combat RemoteEvent observer crashed.\nRemote: " .. fullName(remote)
-                .. "\nFull traceback:\n" .. tostring(message), true)
-            self:SetStatus("ERROR: combat observer crashed", true)
-        end
-    end)
-    self.RemoteConnections[remote] = connection
-    return true
-end
-
-function UntitledBoxingGame:InstallRemoteObserver()
-    if self.RemoteAddedConnection then return true, self.RemoteConnectionCount or 0 end
-    self.RemoteConnections = setmetatable({}, {__mode = "k"})
-    self.RemoteConnectionCount = 0
-    self.RemoteEventsSeen = 0
-    self.RemoteSamples = setmetatable({}, {__mode = "k"})
-    self.RemoteSampleCount = 0
-    for _, instance in ipairs(self.ctx.ReplicatedStorage:GetDescendants()) do
-        if self:IsClientRemote(instance) and self:ConnectCombatRemote(instance) then
-            self.RemoteConnectionCount += 1
-        end
-    end
-    self.RemoteAddedConnection = self.ctx.ReplicatedStorage.DescendantAdded:Connect(function(instance)
-        if self:IsClientRemote(instance) and self:ConnectCombatRemote(instance) then
-            self.RemoteConnectionCount += 1
-        end
-    end)
-    if self.RemoteConnectionCount == 0 then
-        self:UninstallRemoteObserver()
-        return false, 0
-    end
-    self.EffectHelperSource = "RemoteEvent observer"
-    self:AddDiagnostic("RemoteEvent fallback готов: подключено " .. tostring(self.RemoteConnectionCount)
-        .. " входящих событий. Ожидаю AttackTrail/StartupHighlight или ReplicateTryAttack.", false)
-    return true, self.RemoteConnectionCount
-end
-
-function UntitledBoxingGame:UninstallRemoteObserver()
-    if self.RemoteAddedConnection then self.RemoteAddedConnection:Disconnect(); self.RemoteAddedConnection = nil end
-    for _, connection in pairs(self.RemoteConnections or {}) do connection:Disconnect() end
-    self.RemoteConnections = setmetatable({}, {__mode = "k"})
-    self.RemoteConnectionCount = 0
-    self.RemoteEventsSeen = 0
-    self.RemoteSamples = setmetatable({}, {__mode = "k"})
-    self.RemoteSampleCount = 0
-    self.ObservedCombatRemote = nil
-end
-
-function UntitledBoxingGame:InstallHooks()
-    if next(self.Hooks) or self.RemoteAddedConnection then return true, self.EffectHelperSource end
-    local helper, sourceOrError = self:ResolveEffectHelper()
-    if not helper then
-        local observerOk = self:InstallRemoteObserver()
-        if not observerOk then
-            self:AddDiagnostic("Не найден ни один входящий RemoteEvent для combat fallback.", true)
-            return false, "combat RemoteEvent missing"
-        end
-        local dodgeRemote = self:ResolveDodgeRemote()
-        self:AddDiagnostic("Auto Dodge observer initialized; ожидаю первое combat-событие.\nDodgeRemote="
-            .. (dodgeRemote and fullName(dodgeRemote) or "input fallback"), false)
-        return true, sourceOrError
-    end
-    local dodgeRemote = self:ResolveDodgeRemote()
-    local count = 0
-    for _, key in ipairs({"AttackTrail", "StartupHighlight"}) do
-        local original = rawget(helper, key)
-        if type(original) == "function" then
-            local base = original
-            local wrapper = function(data, ...)
-                local ok, hookError = xpcall(function() self:OnCombatEffect(data) end, tracebackError)
-                if not ok and not self.HookWarning then
-                    self.HookWarning = true
-                    self:AddDiagnostic("combat hook crashed.\nFull traceback:\n" .. tostring(hookError), true)
-                    self:SetStatus("ERROR: combat hook crashed", true)
-                end
-                return base(data, ...)
-            end
-            local wasReadonly = false
-            if type(isreadonly) == "function" then
-                local checked, result = pcall(isreadonly, helper)
-                wasReadonly = checked and result == true
-            end
-            if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
-            local patched, patchError = xpcall(function() helper[key] = wrapper end, tracebackError)
-            if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
-            if patched and helper[key] == wrapper then
-                self.Hooks[key] = {Mode = "Table", Original = base, Wrapper = wrapper}
-                count += 1
-            else
-                local environment = type(getgenv) == "function" and getgenv() or _G
-                local hookFunction = environment.hookfunction or hookfunction
-                local hookOk, previous
-                if type(hookFunction) == "function" then
-                    hookOk, previous = xpcall(function() return hookFunction(original, wrapper) end, tracebackError)
-                end
-                if hookOk and type(previous) == "function" then
-                    base = previous
-                    self.Hooks[key] = {
-                        Mode = "HookFunction",
-                        Target = original,
-                        Original = previous,
-                        Wrapper = wrapper,
-                        HookFunction = hookFunction,
-                    }
-                    count += 1
-                else
-                    self:AddDiagnostic("Failed to install " .. tostring(key) .. " hook."
-                        .. "\nTable assignment error:\n" .. tostring(patchError or "table rejected assignment")
-                        .. "\nhookfunction error:\n" .. tostring(previous or "hookfunction unavailable"), true)
-                end
-            end
-        end
-    end
-    if count ~= 2 then
-        self:UninstallHooks()
-        self:AddDiagnostic("Auto Dodge hook verification failed: installed " .. tostring(count)
-            .. "/2 required handlers (AttackTrail + StartupHighlight).", true)
-        return false, "combat hook verification failed"
-    end
-    self:AddDiagnostic("Auto Dodge hooks установлены; ожидаю первое combat-событие.\nEffectHelper=" .. tostring(sourceOrError)
-        .. "\nDodgeRemote=" .. (dodgeRemote and fullName(dodgeRemote) or "input fallback")
-        .. "\nHooks=" .. tostring(count) .. "/2", false)
-    return true, sourceOrError
-end
-
-function UntitledBoxingGame:UninstallHooks()
-    self:UninstallRemoteObserver()
-    local helper = self.EffectHelper
-    for key, hook in pairs(self.Hooks) do
-        if hook.Mode == "HookFunction" then
-            local environment = type(getgenv) == "function" and getgenv() or _G
-            local restoreFunction = environment.restorefunction or restorefunction
-            if type(restoreFunction) == "function" then
-                pcall(restoreFunction, hook.Target)
-            elseif type(hook.HookFunction) == "function" then
-                pcall(hook.HookFunction, hook.Target, hook.Original)
-            end
-        elseif helper and helper[key] == hook.Wrapper then
-                local wasReadonly = false
-                if type(isreadonly) == "function" then
-                    local checked, result = pcall(isreadonly, helper)
-                    wasReadonly = checked and result == true
-                end
-                if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, false) end
-                pcall(function() helper[key] = hook.Original end)
-                if wasReadonly and type(setreadonly) == "function" then pcall(setreadonly, helper, true) end
-        end
-    end
-    self.Hooks = {}
-    self.SeenEffects = setmetatable({}, {__mode = "k"})
-end
-
-function UntitledBoxingGame:SourceAttackId(data)
-    for _, key in ipairs({"AttackId", "AttackID", "SequenceId", "SequenceID", "ActionId", "ActionID"}) do
-        if data[key] ~= nil then return data[key] end
-    end
-    local nested = data.Attack or data.Action or data.HitboxData
-    if type(nested) == "table" then
-        for _, key in ipairs({"AttackId", "AttackID", "SequenceId", "SequenceID", "Id", "ID"}) do
-            if nested[key] ~= nil then return nested[key] end
-        end
-    end
-    return nil
-end
-
-function UntitledBoxingGame:AllocateAttackId(attacker, data)
-    local sourceId = self:SourceAttackId(data)
-    if sourceId ~= nil then return sourceId end
-    self.AttackSequence = (self.AttackSequence or 0) + 1
-    return "effect:" .. tostring(attacker.Name) .. "#" .. tostring(self.AttackSequence)
-end
-
-function UntitledBoxingGame:ImpactTime(data)
-    local now = self.ctx.Workspace:GetServerTimeNow()
-    local absolute = tonumber(data.ImpactTime or data.HitTime or data.ActiveTime)
-    if absolute then return absolute > now - 1 and absolute or now + math.max(0, absolute) end
-    local offset = tonumber(data.TimeUntilImpact or data.ImpactDelay or data.Delay)
-    if offset then return now + math.max(0, offset) end
-    local trailWindow = tonumber(data[5])
-    if trailWindow and trailWindow >= 0 and trailWindow <= 5 then return now + trailWindow end
-    return nil
-end
-
-function UntitledBoxingGame:PayloadHitbox(data)
-    local source = type(data.HitboxData) == "table" and data.HitboxData or data
-    local hitbox = {}
-    local cframe = source.CFrame or source.HitboxCFrame or source.BoxCFrame
-    local size = source.Size or source.HitboxSize or source.BoxSize
-    local range = tonumber(source.Range or source.HitboxRange or source.Reach)
-    if typeof(cframe) == "CFrame" then hitbox.CFrame = cframe end
-    if typeof(size) == "Vector3" then hitbox.Size = size end
-    if range then hitbox.Range = range end
-    return hitbox
-end
-
-function UntitledBoxingGame:RememberTransition(attacker)
-    local current = self.Controller:GetCurrent(attacker)
-    if current and current.AttackType then self.TransitionFrom[attacker] = current.AttackType end
-end
-
-function UntitledBoxingGame:CommitCurrent(attacker, attackType)
-    local current = self.Controller:GetCurrent(attacker)
-    if not current then return end
-    if self.TransitionFrom[attacker] and self.TransitionFrom[attacker] ~= attackType then
-        self.Controller:Log(self.TransitionFrom[attacker] .. " -> " .. attackType .. " detected")
-    end
-    self.TransitionFrom[attacker] = nil
-    current.AttackType = attackType
-    if current.ImpactTime then
-        self.Controller:Commit(attacker, current.AttackId, attackType, current.ImpactTime, current.HitboxData)
-    end
-end
-
-function UntitledBoxingGame:OnAttackTrail(data, attacker)
-    local impactTime = self:ImpactTime(data)
-    if not impactTime then return end
-    local hitbox = self:PayloadHitbox(data)
-    local current = self.Controller:GetCurrent(attacker)
-    if current and current.State == "Started" and current.AttackType and not current.ImpactTime then
-        if self.TransitionFrom[attacker] and self.TransitionFrom[attacker] ~= current.AttackType then
-            self.Controller:Log(self.TransitionFrom[attacker] .. " -> " .. current.AttackType .. " detected")
-        end
-        self.TransitionFrom[attacker] = nil
-        current.ImpactTime, current.HitboxData = impactTime, hitbox
-        self.Controller:Commit(attacker, current.AttackId, current.AttackType, impactTime, hitbox)
-        return
-    end
-    self:RememberTransition(attacker)
-    local attack = self.Controller:Start(attacker, self:AllocateAttackId(attacker, data), nil, self.ctx.Workspace:GetServerTimeNow(), impactTime, hitbox)
-    if attack then attack.SourceStage = "AttackTrail" end
-end
-
-function UntitledBoxingGame:OnStartupHighlight(data, attacker)
-    local isHeavy = data.IsHeavy == true or data[3] == true
-    local isCharge = data.IsCharge == true or data[4] == true
-    local isUltimate = data.IsUltimate == true or data[5] == true
-    local isCancelled = data.Cancelled == true or data.State == "Cancelled" or data.IsFeint == true or data[7] == true
-    local current = self.Controller:GetCurrent(attacker)
-    if isUltimate then
-        if current then self.Controller:Cancel(attacker, current.AttackId, "ability ignored") end
-        return
-    end
-    if isCancelled then
-        self:RememberTransition(attacker)
-        if current then self.Controller:Cancel(attacker, current.AttackId, "combat flow cancelled") end
-        return
-    end
-    local attackType = (isHeavy or isCharge) and "M2" or "M1"
-    if current and current.State == "Started" and not current.AttackType then
-        self:CommitCurrent(attacker, attackType)
-        return
-    end
-    self:RememberTransition(attacker)
-    local attack = self.Controller:Start(attacker, self:AllocateAttackId(attacker, data), attackType, self.ctx.Workspace:GetServerTimeNow(), nil, self:PayloadHitbox(data))
-    if attack then attack.SourceStage = "StartupHighlight" end
-end
-
-function UntitledBoxingGame:OnCombatEffect(data)
-    if not self.Enabled or type(data) ~= "table" or self.SeenEffects[data] then return end
-    local eventName = data.Event or data.Type or data.StateEvent or data[1]
-    if eventName ~= "AttackTrail" and eventName ~= "StartupHighlight" then return end
-    self:ConfirmCombatFlow(self.ObservedCombatRemote and fullName(self.ObservedCombatRemote) or (self.EffectHelperSource or "EffectHelper hook"))
-    self.SeenEffects[data] = true
-    local attacker = data.Attacker or data.Character or data[2]
-    if typeof(attacker) ~= "Instance" or not attacker:IsA("Model") or attacker == self.ctx.LocalPlayer.Character then return end
-    if eventName == "AttackTrail" then self:OnAttackTrail(data, attacker)
-    else self:OnStartupHighlight(data, attacker) end
-end
-
-function UntitledBoxingGame:StateFolder(character)
-    local states = self.ctx.Workspace:FindFirstChild("States")
-    return states and character and states:FindFirstChild(character.Name)
-end
-
-function UntitledBoxingGame:FindState(character, names)
-    local folder = self:StateFolder(character)
-    if not folder then return nil, nil end
-    for _, name in ipairs(names) do
-        local item = folder:FindFirstChild(name, true)
-        if item then return valueOf(item), item end
-        local attribute = folder:GetAttribute(name)
-        if attribute ~= nil then return attribute, folder end
-        if character then
-            attribute = character:GetAttribute(name)
-            if attribute ~= nil then return attribute, character end
-        end
-    end
-    return nil, nil
-end
-
-function UntitledBoxingGame:LockedCharacter(character)
-    local folder = self:StateFolder(character)
-    local occupied = folder and folder:FindFirstChild("Occupied")
-    local lockedNode = occupied and occupied:FindFirstChild("LockedOn")
-    local value = valueOf(lockedNode)
-    local normalized = characterFromInstance(value)
-    if normalized then return normalized end
-
-    value = self:FindState(character, {"LockedOn", "LockOn", "Target"})
-    return characterFromInstance(value)
-end
-
-function UntitledBoxingGame:IsTruthyState(character, names)
-    local value = self:FindState(character, names)
-    if type(value) == "boolean" then return value end
-    if type(value) == "number" then return value > 0 end
-    if type(value) == "string" then
-        local normalized = string.lower(value)
-        return normalized ~= "" and normalized ~= "idle" and normalized ~= "none"
-            and normalized ~= "false" and normalized ~= "0" and normalized ~= "nil"
-    end
-    return value ~= nil
-end
-
-function UntitledBoxingGame:StateRange(character)
-    local value = self:FindState(character, {"HitboxRange", "AttackRange", "PunchRange", "Reach"})
-    value = tonumber(value)
-    return value and value > 0 and value < 30 and value or nil
-end
-
-function UntitledBoxingGame:CanAttackHit(attack)
-    local localCharacter = self.ctx.LocalPlayer.Character
-    local localRoot = humanoidRoot(localCharacter)
-    local attackerRoot = humanoidRoot(attack.Attacker)
-    local localHumanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
-    local attackerHumanoid = attack.Attacker and attack.Attacker:FindFirstChildOfClass("Humanoid")
-    if not localRoot or not attackerRoot or not localHumanoid or localHumanoid.Health <= 0 or not attackerHumanoid or attackerHumanoid.Health <= 0 then
-        return false, "character unavailable"
-    end
-    if self:IsTruthyState(attack.Attacker, {"Stunned", "Stun", "Knocked", "Knockdown", "Downed", "Ragdolled", "Recovery"}) then
-        return false, "attacker cannot hit"
-    end
-    if self.OnlyLockedOpponent then
-        local ourTarget = self:LockedCharacter(localCharacter)
-        local theirTarget = self:LockedCharacter(attack.Attacker)
-        if (ourTarget or theirTarget) and ourTarget ~= attack.Attacker and theirTarget ~= localCharacter then
-            return false, "not current opponent"
-        end
-    end
-
-    local hitbox = attack.HitboxData or {}
-    local range = tonumber(hitbox.Range) or self:StateRange(attack.Attacker) or self.FallbackRange
-    local boxCFrame = typeof(hitbox.CFrame) == "CFrame" and hitbox.CFrame or attackerRoot.CFrame * CFrame.new(0, 0, -range * 0.5)
-    local boxSize = typeof(hitbox.Size) == "Vector3" and hitbox.Size or Vector3.new(7, 7, range)
-    local params = OverlapParams.new()
-    params.FilterType = Enum.RaycastFilterType.Include
-    params.FilterDescendantsInstances = {localCharacter}
-    local ok, parts = pcall(function() return self.ctx.Workspace:GetPartBoundsInBox(boxCFrame, boxSize, params) end)
-    if ok and #parts > 0 then return true end
-    local relative = boxCFrame:PointToObjectSpace(localRoot.Position)
-    local half = boxSize * 0.5 + Vector3.new(1.5, 2.5, 1.5)
-    local inside = math.abs(relative.X) <= half.X and math.abs(relative.Y) <= half.Y and math.abs(relative.Z) <= half.Z
-    return inside, inside and nil or "out of hitbox"
-end
-
-function UntitledBoxingGame:IsDodgeCooldown(character)
-    if self.ctx.Workspace:GetServerTimeNow() < (self.NextDodgeAt or 0) then return true end
-    local canDash, canDashNode = self:FindState(character, {"CanDash", "CanDodge"})
-    if canDashNode and (canDash == false or canDash == 0 or canDash == "false") then return true end
-    if self:IsTruthyState(character, {"Dashing", "Dodging"}) then return true end
-    local cooldown = self:FindState(character, {"DodgeCooldown", "DashCooldown", "DodgeCD", "DashCD"})
-    if type(cooldown) == "boolean" then return cooldown end
-    if type(cooldown) == "number" then
-        local now = self.ctx.Workspace:GetServerTimeNow()
-        if cooldown > 60 then return cooldown > now end
-        return cooldown > 0
-    end
-    if type(cooldown) == "string" then return cooldown ~= "" and cooldown ~= "0" and cooldown ~= "false" end
-    return false
-end
-
-function UntitledBoxingGame:CanDodge()
+function ViolenceDistrict:IsRepairingGenerator()
+    if not teamContains(self.ctx.LocalPlayer, "survivor") then return false end
     local character = self.ctx.LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if not character or not humanoid or humanoid.Health <= 0 then return false, "player dead" end
-    if humanoid.PlatformStand or humanoid.Sit then return false, "player knocked down" end
-    if self:IsTruthyState(character, {"Stunned", "Stun"}) then return false, "player stunned" end
-    if self:IsTruthyState(character, {"Knocked", "Knockdown", "Downed", "Ragdolled"}) then return false, "player knockdown" end
-    if self:IsTruthyState(character, {"Recovery", "Recovering"}) then return false, "player recovery" end
-    if self:IsDodgeCooldown(character) then return false, "dodge cooldown" end
-    return true
-end
-
-function UntitledBoxingGame:ResolveDodgeRemote()
-    if self.DodgeRemote and self.DodgeRemote.Parent then return self.DodgeRemote end
-    local direct = self.ctx.ReplicatedStorage:FindFirstChild("dataRemoteEvent")
-    local recursive = direct or self.ctx.ReplicatedStorage:FindFirstChild("dataRemoteEvent", true)
-    if recursive and recursive:IsA("RemoteEvent") then self.DodgeRemote = recursive end
-    return self.DodgeRemote
-end
-
-function UntitledBoxingGame:SendDodgeInput(side)
-    local environment = executorEnvironment()
-    local press = environment.keypress or keypress
-    local release = environment.keyrelease or keyrelease
-    local methods = {}
-    if type(press) == "function" and type(release) == "function" then
-        local ok = callWithThreadIdentity(function()
-            press(0x20)
-            task.delay(0.08, function() callWithThreadIdentity(function() release(0x20) end) end)
-        end)
-        if ok then table.insert(methods, "executor Space") end
-    end
-
-    local ok = callWithThreadIdentity(function()
-        local input = game:GetService("VirtualInputManager")
-        input:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.delay(0.08, function()
-            callWithThreadIdentity(function()
-                input:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            end)
-        end)
-    end)
-    if ok then table.insert(methods, "VirtualInputManager Space") end
-
-    if #methods == 0 then
-        local virtualUserOk = callWithThreadIdentity(function()
-            local virtualUser = game:GetService("VirtualUser")
-            virtualUser:SetKeyDown(" ")
-            task.delay(0.08, function()
-                callWithThreadIdentity(function() virtualUser:SetKeyUp(" ") end)
-            end)
-        end)
-        if virtualUserOk then table.insert(methods, "VirtualUser Space") end
-    end
-    return #methods > 0, table.concat(methods, " + ")
-end
-
-function UntitledBoxingGame:VerifyDodgeAttempt(sequence, root, startPosition, startedAt)
-    if not self.Enabled or sequence ~= self.DodgeAttemptSequence or not root.Parent then return end
-    local character = self.ctx.LocalPlayer.Character
-    local moved = (root.Position - startPosition).Magnitude >= 0.9
-    local stateConfirmed = self:IsTruthyState(character, {"Dashing", "Dodging", "PerfectDodging", "PerfectDodge"})
-    local velocityConfirmed = root.AssemblyLinearVelocity.Magnitude >= 18
-    if stateConfirmed or moved or velocityConfirmed then
-        if not self.DodgeAttemptConfirmed then
-            self.DodgeAttemptConfirmed = true
-            self.Controller:Log("Dodge executed | confirmed after "
-                .. tostring(math.floor((self.ctx.Workspace:GetServerTimeNow() - startedAt) * 1000 + 0.5)) .. " ms")
-        end
-        return
-    end
-    if self.ctx.Workspace:GetServerTimeNow() - startedAt >= 0.14 and not self.DodgeAttemptConfirmed then
-        self.Controller:Log("Dodge request was not confirmed by movement/state")
-    end
-end
-
-function UntitledBoxingGame:ExecuteDodge(attack)
-    local character = self.ctx.LocalPlayer.Character
-    local root = humanoidRoot(character)
-    local attackerRoot = humanoidRoot(attack.Attacker)
+    local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root then return false end
-
-    local direction = attackerRoot and (root.Position - attackerRoot.Position) or root.CFrame.RightVector
-    if direction.Magnitude < 0.01 then direction = root.CFrame.RightVector end
-    self.DodgeSide = self.DodgeSide == "Right" and "Left" or "Right"
-
-    local inputOk, inputSource = self:SendDodgeInput(self.DodgeSide)
-    local remote = self:ResolveDodgeRemote()
-    local remoteOk = false
-    if remote then
-        remoteOk = pcall(function()
-            remote:FireServer({{direction, self.DodgeSide}, "\21"})
-        end)
-    end
-
-    if remoteOk or inputOk then
-        if not self.DodgeInputReported then
-            self.DodgeInputReported = true
-            local methods = {}
-            if remoteOk then table.insert(methods, "UBG dash packet " .. fullName(remote)) end
-            if inputOk then table.insert(methods, tostring(inputSource)) end
-            self:AddDiagnostic("Dodge request отправлен: " .. table.concat(methods, " + ") .. ".", false)
-        end
-        self.DodgeAttemptSequence = (self.DodgeAttemptSequence or 0) + 1
-        self.DodgeAttemptConfirmed = false
-        local sequence = self.DodgeAttemptSequence
-        local startPosition = root.Position
-        local startedAt = self.ctx.Workspace:GetServerTimeNow()
-        for _, delay in ipairs({0.025, 0.065, 0.14}) do
-            task.delay(delay, function()
-                self:VerifyDodgeAttempt(sequence, root, startPosition, startedAt)
-            end)
-        end
-        self.NextDodgeAt = self.ctx.Workspace:GetServerTimeNow() + 0.12
-        return true
+    for _, generator in ipairs(self.Generators) do
+        local part = generator.Parent and basePart(generator)
+        local progress = tonumber(generator:GetAttribute("RepairProgress") or generator:GetAttribute("Progress")) or 0
+        if part and progress < 100 and (part.Position - root.Position).Magnitude <= 18 then return true end
     end
     return false
 end
 
-function UntitledBoxingGame:GetConfig()
+function ViolenceDistrict:GetReactionPrompt()
+    local playerGui = self.ctx.LocalPlayer:FindFirstChild("PlayerGui")
+    local prompt = playerGui and playerGui:FindFirstChild("SkillCheckPromptGui")
+    local check = prompt and prompt:FindFirstChild("Check")
+    if not check or not check:IsA("GuiObject") then return nil end
+    return check, check:FindFirstChild("Line"), check:FindFirstChild("Goal")
+end
+
+function ViolenceDistrict:GetActionButton()
+    local current = self.ctx.LocalPlayer:FindFirstChild("PlayerGui")
+    for _, name in ipairs({"Survivor-mob", "Controls", "action", "check"}) do
+        current = current and current:FindFirstChild(name)
+    end
+    return current
+end
+
+function ViolenceDistrict:PressReaction()
+    local button = self:GetActionButton()
+    if button and type(firesignal) == "function" then
+        local ok = pcall(function() firesignal(button.Activated) end)
+        if ok then return true end
+    end
+
+    if not self.VirtualInput then
+        local ok, service = pcall(game.GetService, game, "VirtualInputManager")
+        if ok then self.VirtualInput = service end
+    end
+    if not self.VirtualInput then return false end
+
+    if button and button:IsA("GuiObject") then
+        local position, size = button.AbsolutePosition, button.AbsoluteSize
+        local x, y = position.X + size.X * 0.5, position.Y + size.Y * 0.5
+        local okInset, guiService = pcall(game.GetService, game, "GuiService")
+        local inset = okInset and guiService:GetGuiInset() or Vector2.new(0, 0)
+        x, y = x + inset.X, y + inset.Y
+        local ok = pcall(function()
+            self.VirtualInput:SendTouchEvent(self.ReactionTouchId, 0, x, y)
+            task.delay(0.015, function()
+                pcall(function() self.VirtualInput:SendTouchEvent(self.ReactionTouchId, 2, x, y) end)
+            end)
+        end)
+        if ok then return true end
+    end
+
+    return pcall(function()
+        self.VirtualInput:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        self.VirtualInput:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    end)
+end
+
+function ViolenceDistrict:IsRotationInside(rotation, startRotation, endRotation)
+    rotation, startRotation, endRotation = rotation % 360, startRotation % 360, endRotation % 360
+    if startRotation > endRotation then return rotation >= startRotation or rotation <= endRotation end
+    return rotation >= startRotation and rotation <= endRotation
+end
+
+function ViolenceDistrict:TryAutoReaction()
+    local check, line, goal = self:GetReactionPrompt()
+    if not check or not check.Visible then
+        self.ReactionTriggered = false
+        return
+    end
+    if self.ReactionTriggered or not line or not goal or not self:IsRepairingGenerator() then return end
+    local startRotation = (goal.Rotation + 101) % 360
+    local endRotation = (goal.Rotation + 115) % 360
+    if self:IsRotationInside(line.Rotation, startRotation, endRotation) then
+        self.ReactionTriggered = true
+        self:PressReaction()
+    end
+end
+
+function ViolenceDistrict:Heartbeat(delta)
+    if self.AutoReaction then self:TryAutoReaction() end
+    self.Elapsed += delta
+    if self.Elapsed < 0.2 then return end
+    self.Elapsed = 0
+    if self.KillerESP then self:ScanKillers() end
+    if self.GeneratorESP or self.AutoReaction then self:ScanGenerators() end
+end
+
+function ViolenceDistrict:GetConfig()
     return {
-        enabled = self.Enabled,
-        debug = self.Debug,
-        latencyCompensation = self.LatencyCompensation,
-        fallbackRange = self.FallbackRange,
-        onlyLockedOpponent = self.OnlyLockedOpponent,
+        killerESP = self.KillerESP,
+        generatorESP = self.GeneratorESP,
+        autoReaction = self.AutoReaction,
     }
 end
 
-function UntitledBoxingGame:ApplyConfig(data)
+function ViolenceDistrict:ApplyConfig(data)
     if type(data) ~= "table" then return end
-    self.Debug = data.debug == true
-    self.LatencyCompensation = math.clamp(tonumber(data.latencyCompensation) or self.LatencyCompensation, 0, 0.06)
-    self.FallbackRange = math.clamp(tonumber(data.fallbackRange) or self.FallbackRange, 4, 15)
-    self.OnlyLockedOpponent = data.onlyLockedOpponent ~= false
-    self.DebugControl.Set(self.Debug)
-    self.LatencyControl.Set(self.LatencyCompensation * 1000)
-    self.RangeControl.Set(self.FallbackRange)
-    self.LockedControl.Set(self.OnlyLockedOpponent)
-    self:SetEnabled(data.enabled == true)
-    self.EnabledControl.Set(self.Enabled)
+    self.KillerESP = data.killerESP == true
+    self.GeneratorESP = data.generatorESP == true
+    self.AutoReaction = data.autoReaction == true
+    self.KillerESPControl.Set(self.KillerESP)
+    self.GeneratorESPControl.Set(self.GeneratorESP)
+    self.AutoReactionControl.Set(self.AutoReaction)
+    self:RefreshHeartbeat()
 end
 
-function UntitledBoxingGame:Destroy()
-    self.Enabled = false
-    if self.Controller then self.Controller:SetEnabled(false) end
-    self:UninstallHooks()
+function ViolenceDistrict:Destroy()
+    self.KillerESP, self.GeneratorESP, self.AutoReaction = false, false, false
+    self:RefreshHeartbeat()
+    self.KillerChams:Clear()
+    self.GeneratorChams:Clear()
+    table.clear(self.Generators)
 end
 
-return UntitledBoxingGame
+return ViolenceDistrict
 ]====],
 }
 

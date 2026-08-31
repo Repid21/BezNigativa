@@ -165,7 +165,7 @@ function Window:AddPage(name, subtitle)
     tab.Font = Enum.Font.Code
     tab.Text = name
     tab.TextColor3 = Color3.fromRGB(175, 175, 175)
-    tab.TextSize = 14
+    tab.TextSize = #name > 16 and 12 or 14
     self.tabCounter += 1
     local preferredOrder = {
         Combat = 1,
@@ -175,7 +175,7 @@ function Window:AddPage(name, subtitle)
         Other = 5,
         Forsaken = 6,
         ["Murder Mystery 2"] = 6,
-        ["Untitled Boxing Game"] = 6,
+        ["VIOLENCE DISTRICT"] = 6,
     }
     tab.LayoutOrder = preferredOrder[name] or (100 + self.tabCounter)
     tab.Parent = self.Sidebar

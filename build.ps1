@@ -17,8 +17,7 @@ $modules = [ordered]@{
     "games/RoleChams" = "src/games/RoleChams.lua"
     "games/Forsaken" = "src/games/Forsaken.lua"
     "games/MurderMystery2" = "src/games/MurderMystery2.lua"
-    "games/AutoDodgeController" = "src/games/AutoDodgeController.lua"
-    "games/UntitledBoxingGame" = "src/games/UntitledBoxingGame.lua"
+    "games/ViolenceDistrict" = "src/games/ViolenceDistrict.lua"
 }
 
 $sources = [ordered]@{}

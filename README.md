@@ -18,8 +18,7 @@ src/
   games/RoleChams.lua
   games/Forsaken.lua
   games/MurderMystery2.lua
-  games/AutoDodgeController.lua
-  games/UntitledBoxingGame.lua
+  games/ViolenceDistrict.lua
 ```
 
 Если файлы лежат не в стандартной папке `src`, перед запуском укажите путь:
@@ -40,6 +39,4 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Repid21/BezNigativa/m
 
 После изменений в классах заново запустите `build.ps1`, чтобы обновить standalone-файл.
 
-Acceptance-тесты Auto Dodge запускаются через `tests/run.ps1` (нужен `luau.exe` в `PATH`).
-
-Поддерживаемые игровые профили определяются по Universe ID: Forsaken, Murder Mystery 2 и Untitled Boxing Game. Для распознанной игры внизу боковой панели появляется отдельная вкладка. В UBG она содержит универсальный Auto Dodge по внутренним `AttackTrail`/`StartupHighlight`, без `AnimationId` и таблиц стилей.
+Поддерживаемые игровые профили определяются по Universe ID: Forsaken, Murder Mystery 2 и VIOLENCE DISTRICT. Для распознанной игры внизу боковой панели появляется отдельная вкладка.

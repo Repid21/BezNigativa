@@ -14,10 +14,10 @@ local PROFILES = {
         MainPlaceId = 142823291,
     },
     {
-        Name = "Untitled Boxing Game",
-        Module = "games/UntitledBoxingGame",
-        UniverseId = 4730278139,
-        MainPlaceId = 13621938427,
+        Name = "VIOLENCE DISTRICT",
+        Module = "games/ViolenceDistrict",
+        UniverseId = 6739698191,
+        MainPlaceId = 93978595733734,
     },
 }
 
