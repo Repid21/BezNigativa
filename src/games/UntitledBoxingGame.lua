@@ -66,6 +66,25 @@ local function findCombatPayload(value, depth, seen)
     return nil
 end
 
+local function valueShape(value)
+    local kind = typeof(value)
+    if kind == "string" then
+        local clean = string.gsub(value, "%c", "?")
+        return "string(" .. string.sub(clean, 1, 24) .. ")"
+    end
+    if kind == "number" or kind == "boolean" then return kind .. "(" .. tostring(value) .. ")" end
+    if kind == "Instance" then return value.ClassName .. "(" .. fullName(value) .. ")" end
+    if type(value) == "table" then
+        local entries, count = {}, 0
+        for key, nested in pairs(value) do
+            count += 1
+            if count <= 6 then table.insert(entries, tostring(key) .. ":" .. typeof(nested)) end
+        end
+        return "table{" .. table.concat(entries, ",") .. (count > 6 and ",..." or "") .. "}"
+    end
+    return kind
+end
+
 function UntitledBoxingGame.new(ctx)
     local self = setmetatable({
         ctx = ctx,
@@ -267,18 +286,44 @@ function UntitledBoxingGame:FindLoadedEffectHelper()
     local environment = executorEnvironment()
     local getGarbage = environment.getgc or getgc
     if type(getGarbage) ~= "function" then return nil, "executor does not expose getgc" end
-    local ok, objects = xpcall(function() return getGarbage(true) end, tracebackError)
-    if not ok or type(objects) ~= "table" then
-        local firstError = objects
-        ok, objects = xpcall(function() return getGarbage() end, tracebackError)
-        if not ok or type(objects) ~= "table" then
-            return nil, "getgc(true): " .. tostring(firstError) .. "\ngetgc(): " .. tostring(objects)
+    local snapshots, diagnostics = {}, {}
+    local okTrue, objectsTrue = xpcall(function() return getGarbage(true) end, tracebackError)
+    if okTrue and type(objectsTrue) == "table" then table.insert(snapshots, objectsTrue)
+    else table.insert(diagnostics, "getgc(true): " .. tostring(objectsTrue)) end
+    local okDefault, objectsDefault = xpcall(function() return getGarbage() end, tracebackError)
+    if okDefault and type(objectsDefault) == "table" and objectsDefault ~= objectsTrue then
+        table.insert(snapshots, objectsDefault)
+    elseif not okDefault then
+        table.insert(diagnostics, "getgc(): " .. tostring(objectsDefault))
+    end
+
+    local tableCount, functionCount, upvalueCount = 0, 0, 0
+    for _, objects in ipairs(snapshots) do
+        for _, candidate in pairs(objects) do
+            if type(candidate) == "table" then
+                tableCount += 1
+                local helper = findEffectHelperInValue(candidate, 0, {})
+                if helper then return helper end
+            end
         end
     end
-    for _, candidate in pairs(objects) do
-        if isEffectHelper(candidate) then return candidate end
+    for _, objects in ipairs(snapshots) do
+        for _, candidate in pairs(objects) do
+            if type(candidate) == "function" and functionCount < 1500 then
+                functionCount += 1
+                if functionCount % 250 == 0 then task.wait() end
+                local values = self:GetFunctionUpvalues(candidate)
+                if values then
+                    upvalueCount += 1
+                    local helper = findEffectHelperInValue(values, 0, {})
+                    if helper then return helper end
+                end
+            end
+        end
     end
-    return nil, "loaded EffectHelper API table was not found in getgc"
+    table.insert(diagnostics, "scanned getgc tables=" .. tostring(tableCount) .. ", functions=" .. tostring(functionCount)
+        .. ", readable upvalues=" .. tostring(upvalueCount))
+    return nil, table.concat(diagnostics, "\n")
 end
 
 function UntitledBoxingGame:GetFunctionUpvalues(callback)
@@ -376,6 +421,19 @@ function UntitledBoxingGame:ConfirmCombatFlow(source)
     self:AddDiagnostic("Combat flow подтверждён через " .. tostring(source) .. ".", false)
 end
 
+function UntitledBoxingGame:RecordRemoteSample(remote, arguments)
+    self.RemoteSamples = self.RemoteSamples or setmetatable({}, {__mode = "k"})
+    if self.RemoteSamples[remote] or (self.RemoteSampleCount or 0) >= 8 then return end
+    self.RemoteSamples[remote] = true
+    self.RemoteSampleCount = (self.RemoteSampleCount or 0) + 1
+    local shapes = {}
+    for index = 1, math.min(arguments.n, 6) do
+        table.insert(shapes, tostring(index) .. "=" .. valueShape(arguments[index]))
+    end
+    self:AddDiagnostic("Remote sample " .. fullName(remote) .. " | args=" .. tostring(arguments.n)
+        .. " | " .. table.concat(shapes, " ; "), false)
+end
+
 function UntitledBoxingGame:InspectRemotePayload(remote, ...)
     local arguments = table.pack(...)
     if arguments[1] == "AttackTrail" or arguments[1] == "StartupHighlight" then
@@ -406,6 +464,7 @@ function UntitledBoxingGame:ConnectCombatRemote(remote)
             self:SetStatus("Listening: " .. tostring(self.RemoteEventsSeen) .. " events / 0 combat", false)
         end
         local arguments = table.pack(...)
+        if not self.CombatConfirmed then self:RecordRemoteSample(remote, arguments) end
         local ok, message = xpcall(function()
             self:InspectRemotePayload(remote, table.unpack(arguments, 1, arguments.n))
         end, tracebackError)
@@ -425,6 +484,8 @@ function UntitledBoxingGame:InstallRemoteObserver()
     self.RemoteConnections = setmetatable({}, {__mode = "k"})
     self.RemoteConnectionCount = 0
     self.RemoteEventsSeen = 0
+    self.RemoteSamples = setmetatable({}, {__mode = "k"})
+    self.RemoteSampleCount = 0
     for _, instance in ipairs(self.ctx.ReplicatedStorage:GetDescendants()) do
         if self:IsClientRemote(instance) and self:ConnectCombatRemote(instance) then
             self.RemoteConnectionCount += 1
@@ -451,6 +512,8 @@ function UntitledBoxingGame:UninstallRemoteObserver()
     self.RemoteConnections = setmetatable({}, {__mode = "k"})
     self.RemoteConnectionCount = 0
     self.RemoteEventsSeen = 0
+    self.RemoteSamples = setmetatable({}, {__mode = "k"})
+    self.RemoteSampleCount = 0
     self.ObservedCombatRemote = nil
 end
 
