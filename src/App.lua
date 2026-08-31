@@ -89,7 +89,7 @@ function App.start(loadModule)
         for name, value in pairs(self.SavedGameProfiles or {}) do gameProfiles[name] = value end
         if self.GameProfileName then gameProfiles[self.GameProfileName] = self.GameProfile:GetConfig() end
         return {
-            version = 9.2,
+            version = 9.3,
             friends = self.Friends:GetConfig(),
             visuals = self.Visuals:GetConfig(),
             movement = self.Movement:GetConfig(),
@@ -116,7 +116,7 @@ function App.start(loadModule)
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end
     environment.BezNigativaApp = self
-    print("[BezNigativa] v9.2 modular loaded")
+    print("[BezNigativa] v9.3 modular loaded")
     return self
 end
 

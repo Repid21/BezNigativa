@@ -1,6 +1,6 @@
--- BezNigativa v9.2 injector entrypoint.
+-- BezNigativa v9.3 injector entrypoint.
 local BASE_URL = "https://raw.githubusercontent.com/Repid21/BezNigativa/main/src/"
-local BUILD_QUERY = "?build=9.2"
+local BUILD_QUERY = "?build=9.3"
 local cache = {}
 
 local function loadModule(name)
