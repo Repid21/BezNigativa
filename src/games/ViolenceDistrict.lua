@@ -29,6 +29,9 @@ function ViolenceDistrict.new(ctx)
         Elapsed = 0,
         Generators = {},
         ReactionTriggered = false,
+        ReactionCheck = nil,
+        ReactionGoalRotation = nil,
+        ReactionLineRotation = nil,
         ReactionTouchId = 8822,
     }, ViolenceDistrict)
 
@@ -60,7 +63,7 @@ function ViolenceDistrict.new(ctx)
     local reaction = stack:Add("Auto Reaction", 126)
     self.AutoReactionControl = ctx.Window:Toggle(reaction.Settings, UDim2.fromOffset(10, 4), 260, "Реакция генератора", false, function(value)
         self.AutoReaction = value
-        self.ReactionTriggered = false
+        self:ResetReactionState()
         self:RefreshHeartbeat()
         ctx.Touch()
     end)
@@ -88,7 +91,7 @@ end
 function ViolenceDistrict:RefreshHeartbeat()
     local active = self.KillerESP or self.GeneratorESP or self.AutoReaction
     if active and not self.HeartbeatLoop then
-        self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+        self.HeartbeatLoop = self.ctx.RunService.RenderStepped:Connect(function(delta)
             local ok, message = pcall(function() self:Heartbeat(delta) end)
             if not ok and not self.Warned then
                 self.Warned = true
@@ -203,19 +206,63 @@ function ViolenceDistrict:IsRotationInside(rotation, startRotation, endRotation)
     return rotation >= startRotation and rotation <= endRotation
 end
 
+function ViolenceDistrict:RotationDistance(first, second)
+    return math.abs(((first - second + 180) % 360) - 180)
+end
+
+function ViolenceDistrict:CrossedRotation(previous, current, target)
+    local movement = ((current - previous + 180) % 360) - 180
+    local targetMovement = ((target - previous + 180) % 360) - 180
+    if movement >= 0 then return targetMovement >= 0 and targetMovement <= movement end
+    return targetMovement <= 0 and targetMovement >= movement
+end
+
+function ViolenceDistrict:ResetReactionState()
+    self.ReactionTriggered = false
+    self.ReactionCheck = nil
+    self.ReactionGoalRotation = nil
+    self.ReactionLineRotation = nil
+end
+
 function ViolenceDistrict:TryAutoReaction()
     local check, line, goal = self:GetReactionPrompt()
     if not check or not check.Visible then
-        self.ReactionTriggered = false
+        self:ResetReactionState()
         return
     end
-    if self.ReactionTriggered or not line or not goal or not self:IsRepairingGenerator() then return end
+    if not line or not goal then return end
+    if not self:IsRepairingGenerator() then
+        self:ResetReactionState()
+        return
+    end
+
+    local lineRotation = line.Rotation % 360
+    local goalRotation = goal.Rotation % 360
+    local previousLine = self.ReactionLineRotation
+    local checkChanged = self.ReactionCheck ~= check
+    local goalChanged = self.ReactionGoalRotation ~= nil
+        and self:RotationDistance(goalRotation, self.ReactionGoalRotation) > 1
+    local lineJumped = previousLine ~= nil
+        and self:RotationDistance(lineRotation, previousLine) > 24
+
+    -- King's Scourge keeps the prompt visible while rapidly replacing its
+    -- short checks. Goal changes and large needle jumps mark a new check.
+    local newCheck = checkChanged or goalChanged or (self.ReactionTriggered and lineJumped)
+    if newCheck then self.ReactionTriggered = false end
+    self.ReactionCheck = check
+    self.ReactionGoalRotation = goalRotation
+    self.ReactionLineRotation = lineRotation
+    if self.ReactionTriggered then return end
+
     -- The full green sector is roughly +101..+115 degrees. Triggering on its
     -- first pixel is unstable because the displayed line can be one frame
     -- ahead of the state processed by the game. Use the inner sector instead.
-    local startRotation = (goal.Rotation + 106) % 360
-    local endRotation = (goal.Rotation + 111) % 360
-    if self:IsRotationInside(line.Rotation, startRotation, endRotation) then
+    local startRotation = (goalRotation + 106) % 360
+    local endRotation = (goalRotation + 111) % 360
+    local centerRotation = (goalRotation + 108.5) % 360
+    local crossedCenter = previousLine ~= nil and not newCheck and not lineJumped
+        and self:CrossedRotation(previousLine, lineRotation, centerRotation)
+    if self:IsRotationInside(lineRotation, startRotation, endRotation) or crossedCenter then
         self.ReactionTriggered = true
         self:PressReaction()
     end
@@ -251,6 +298,7 @@ end
 
 function ViolenceDistrict:Destroy()
     self.KillerESP, self.GeneratorESP, self.AutoReaction = false, false, false
+    self:ResetReactionState()
     self:RefreshHeartbeat()
     self.KillerChams:Clear()
     self.GeneratorChams:Clear()

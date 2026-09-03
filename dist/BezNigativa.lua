@@ -1983,6 +1983,7 @@ function MurderMystery2.new(ctx)
         FarmBagElapsed = 0,
         FarmSpeed = 20,
         FarmCollision = setmetatable({}, {__mode = "k"}),
+        SpawnWalkToken = 0,
         LastTrigger = 0,
         PlayerData = {},
         TouchedCoins = setmetatable({}, {__mode = "k"}),
@@ -2029,14 +2030,36 @@ function MurderMystery2.new(ctx)
     self.AutoFarmControl = ctx.Window:Toggle(farm.Settings, UDim2.fromOffset(10, 4), 220, "Enabled", false, function(value)
         self:SetAutoFarm(value); ctx.Touch()
     end)
-    self:AddHint(farm.Settings, "Летает под картой; полный мешок — возврат на безопасный spawn лобби.")
+    self:AddHint(farm.Settings, "Полный мешок — возврат на spawn, короткая прогулка и Anti-AFK.")
 
     ctx.Janitor:Add(function()
         if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
     end)
     self:ConnectPlayerData()
+    self:ConnectAntiIdle()
     task.defer(function() self:CaptureLobbyPivot() end)
     return self
+end
+
+function MurderMystery2:ConnectAntiIdle()
+    local player = self.ctx.LocalPlayer
+    if not player or not player.Idled then return end
+    self.ctx.Janitor:Add(player.Idled:Connect(function()
+        if not self.AutoFarm then return end
+        if not self.VirtualUser then
+            local ok, service = pcall(game.GetService, game, "VirtualUser")
+            if ok then self.VirtualUser = service end
+        end
+        if not self.VirtualUser then return end
+        local camera = self.ctx.Workspace.CurrentCamera
+        pcall(function()
+            self.VirtualUser:CaptureController()
+            self.VirtualUser:Button2Down(Vector2.new(0, 0), camera and camera.CFrame or CFrame.new())
+            task.delay(0.08, function()
+                pcall(function() self.VirtualUser:Button2Up(Vector2.new(0, 0), camera and camera.CFrame or CFrame.new()) end)
+            end)
+        end)
+    end))
 end
 
 function MurderMystery2:ConnectPlayerData()
@@ -2172,7 +2195,7 @@ function MurderMystery2:UpdateGunVisual(gunDrop)
 end
 
 function MurderMystery2:PickupGun(gunDrop)
-    if self.AutoFarm or self:GetRole(self.ctx.LocalPlayer) == "Murderer" or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) or os.clock() - (self.LastPickupAttempt or 0) < 0.25 then return end
+    if self.AutoFarm or not self:IsLocalPlayerInRound() or self:GetRole(self.ctx.LocalPlayer) == "Murderer" or findTool(self.ctx.LocalPlayer, {"Gun", "Revolver"}) or os.clock() - (self.LastPickupAttempt or 0) < 0.25 then return end
     local part = basePart(gunDrop)
     local character = self.ctx.LocalPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -2187,6 +2210,22 @@ function MurderMystery2:PickupGun(gunDrop)
         self.TouchWarning = true
         warn("[BezNigativa/MM2] Auto Pickup requires firetouchinterest; teleport fallback is intentionally disabled")
     end
+end
+
+function MurderMystery2:IsLocalPlayerInRound()
+    local player = self.ctx.LocalPlayer
+    if player:GetAttribute("Alive") ~= true or not self:FindMap() then return false end
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or humanoid.Health <= 0 or not root then return false end
+
+    local playerGui = player:FindFirstChild("PlayerGui")
+    local main = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameGui = main and main:FindFirstChild("Game")
+    local timer = gameGui and gameGui:FindFirstChild("Timer")
+    if timer and timer:IsA("GuiObject") and not timer.Visible then return false end
+    return true
 end
 
 function MurderMystery2:GetEquippedWeapon(role)
@@ -2323,13 +2362,41 @@ function MurderMystery2:TeleportToSpawn()
             end
         end
     end
+    local walkCFrame
     if spawnPart then
         character:PivotTo(spawnPart.CFrame * CFrame.new(0, 4, 0))
+        walkCFrame = spawnPart.CFrame
     elseif self.LobbyPivot then
         character:PivotTo(self.LobbyPivot)
+        walkCFrame = self.LobbyPivot
     end
     local root = character:FindFirstChild("HumanoidRootPart")
     if root then root.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end
+    if walkCFrame then self:WalkAfterSpawn(walkCFrame) end
+end
+
+function MurderMystery2:WalkAfterSpawn(spawnCFrame)
+    self.SpawnWalkToken += 1
+    local token = self.SpawnWalkToken
+    task.spawn(function()
+        task.wait(0.18)
+        if not self.AutoFarm or token ~= self.SpawnWalkToken then return end
+        local character = self.ctx.LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or humanoid.Health <= 0 or not root then return end
+
+        local origin = root.Position
+        local waypoints = {origin + spawnCFrame.LookVector * 8, origin}
+        for _, waypoint in ipairs(waypoints) do
+            if not self.AutoFarm or token ~= self.SpawnWalkToken or humanoid.Health <= 0 then return end
+            humanoid:MoveTo(waypoint)
+            local deadline = os.clock() + 2.5
+            repeat task.wait(0.05)
+            until not self.AutoFarm or token ~= self.SpawnWalkToken or humanoid.Health <= 0
+                or not root.Parent or (root.Position - waypoint).Magnitude <= 1.5 or os.clock() >= deadline
+        end
+    end)
 end
 
 function MurderMystery2:SetAutoFarm(value)
@@ -2351,6 +2418,7 @@ function MurderMystery2:SetAutoFarm(value)
         if movement and type(movement.SetFeature) == "function" then movement:SetFeature("Noclip", true, false, true) end
         self.FarmStopToken = (self.FarmStopToken or 0) + 1
     else
+        self.SpawnWalkToken += 1
         self:StopFarmMotion(true)
         if wasEnabled and self.AutoFarmForcedNoclip then
             local movement = self.ctx.Movement
@@ -2540,6 +2608,7 @@ end
 function MurderMystery2:Destroy()
     local restoreNoclip = self.AutoFarmForcedNoclip and self.AutoFarmPreviousNoclip == true
     self.AutoFarm = false
+    self.SpawnWalkToken += 1
     self:StopFarmMotion(false)
     local movement = self.ctx.Movement
     if self.AutoFarmForcedNoclip and movement and type(movement.SetFeature) == "function" then
@@ -2587,6 +2656,9 @@ function ViolenceDistrict.new(ctx)
         Elapsed = 0,
         Generators = {},
         ReactionTriggered = false,
+        ReactionCheck = nil,
+        ReactionGoalRotation = nil,
+        ReactionLineRotation = nil,
         ReactionTouchId = 8822,
     }, ViolenceDistrict)
 
@@ -2618,7 +2690,7 @@ function ViolenceDistrict.new(ctx)
     local reaction = stack:Add("Auto Reaction", 126)
     self.AutoReactionControl = ctx.Window:Toggle(reaction.Settings, UDim2.fromOffset(10, 4), 260, "Реакция генератора", false, function(value)
         self.AutoReaction = value
-        self.ReactionTriggered = false
+        self:ResetReactionState()
         self:RefreshHeartbeat()
         ctx.Touch()
     end)
@@ -2646,7 +2718,7 @@ end
 function ViolenceDistrict:RefreshHeartbeat()
     local active = self.KillerESP or self.GeneratorESP or self.AutoReaction
     if active and not self.HeartbeatLoop then
-        self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+        self.HeartbeatLoop = self.ctx.RunService.RenderStepped:Connect(function(delta)
             local ok, message = pcall(function() self:Heartbeat(delta) end)
             if not ok and not self.Warned then
                 self.Warned = true
@@ -2761,19 +2833,63 @@ function ViolenceDistrict:IsRotationInside(rotation, startRotation, endRotation)
     return rotation >= startRotation and rotation <= endRotation
 end
 
+function ViolenceDistrict:RotationDistance(first, second)
+    return math.abs(((first - second + 180) % 360) - 180)
+end
+
+function ViolenceDistrict:CrossedRotation(previous, current, target)
+    local movement = ((current - previous + 180) % 360) - 180
+    local targetMovement = ((target - previous + 180) % 360) - 180
+    if movement >= 0 then return targetMovement >= 0 and targetMovement <= movement end
+    return targetMovement <= 0 and targetMovement >= movement
+end
+
+function ViolenceDistrict:ResetReactionState()
+    self.ReactionTriggered = false
+    self.ReactionCheck = nil
+    self.ReactionGoalRotation = nil
+    self.ReactionLineRotation = nil
+end
+
 function ViolenceDistrict:TryAutoReaction()
     local check, line, goal = self:GetReactionPrompt()
     if not check or not check.Visible then
-        self.ReactionTriggered = false
+        self:ResetReactionState()
         return
     end
-    if self.ReactionTriggered or not line or not goal or not self:IsRepairingGenerator() then return end
+    if not line or not goal then return end
+    if not self:IsRepairingGenerator() then
+        self:ResetReactionState()
+        return
+    end
+
+    local lineRotation = line.Rotation % 360
+    local goalRotation = goal.Rotation % 360
+    local previousLine = self.ReactionLineRotation
+    local checkChanged = self.ReactionCheck ~= check
+    local goalChanged = self.ReactionGoalRotation ~= nil
+        and self:RotationDistance(goalRotation, self.ReactionGoalRotation) > 1
+    local lineJumped = previousLine ~= nil
+        and self:RotationDistance(lineRotation, previousLine) > 24
+
+    -- King's Scourge keeps the prompt visible while rapidly replacing its
+    -- short checks. Goal changes and large needle jumps mark a new check.
+    local newCheck = checkChanged or goalChanged or (self.ReactionTriggered and lineJumped)
+    if newCheck then self.ReactionTriggered = false end
+    self.ReactionCheck = check
+    self.ReactionGoalRotation = goalRotation
+    self.ReactionLineRotation = lineRotation
+    if self.ReactionTriggered then return end
+
     -- The full green sector is roughly +101..+115 degrees. Triggering on its
     -- first pixel is unstable because the displayed line can be one frame
     -- ahead of the state processed by the game. Use the inner sector instead.
-    local startRotation = (goal.Rotation + 106) % 360
-    local endRotation = (goal.Rotation + 111) % 360
-    if self:IsRotationInside(line.Rotation, startRotation, endRotation) then
+    local startRotation = (goalRotation + 106) % 360
+    local endRotation = (goalRotation + 111) % 360
+    local centerRotation = (goalRotation + 108.5) % 360
+    local crossedCenter = previousLine ~= nil and not newCheck and not lineJumped
+        and self:CrossedRotation(previousLine, lineRotation, centerRotation)
+    if self:IsRotationInside(lineRotation, startRotation, endRotation) or crossedCenter then
         self.ReactionTriggered = true
         self:PressReaction()
     end
@@ -2809,6 +2925,7 @@ end
 
 function ViolenceDistrict:Destroy()
     self.KillerESP, self.GeneratorESP, self.AutoReaction = false, false, false
+    self:ResetReactionState()
     self:RefreshHeartbeat()
     self.KillerChams:Clear()
     self.GeneratorChams:Clear()
