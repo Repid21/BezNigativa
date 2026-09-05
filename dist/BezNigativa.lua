@@ -1866,17 +1866,50 @@ Forsaken.__index = Forsaken
 local KILLER_RED = Color3.fromRGB(255, 45, 45)
 local GENERATOR_YELLOW = Color3.fromRGB(255, 210, 55)
 local GENERATOR_GREEN = Color3.fromRGB(55, 225, 110)
+local ITEM_HEAL = Color3.fromRGB(70, 235, 120)
+local ITEM_SPEED = Color3.fromRGB(55, 190, 255)
+local ITEM_FOOD = Color3.fromRGB(255, 155, 55)
+local ITEM_SPECIAL = Color3.fromRGB(190, 105, 255)
+local ITEM_FAKE = Color3.fromRGB(255, 70, 110)
+
+local ITEM_COLORS = {
+    medkit = ITEM_HEAL,
+    fakemedkit = ITEM_FAKE,
+    bloxycola = ITEM_SPEED,
+    bloxycolaitem = ITEM_SPEED,
+    bloxycolatest = ITEM_SPEED,
+    bloxiade = ITEM_SPEED,
+    cola = ITEM_SPEED,
+    fakebloxycola = ITEM_FAKE,
+    pizza = ITEM_FOOD,
+    pizza2 = ITEM_FOOD,
+    pizzaslice = ITEM_FOOD,
+    epicsauce = ITEM_FOOD,
+    flashlight = ITEM_SPECIAL,
+    glock = ITEM_SPECIAL,
+    glock19 = ITEM_SPECIAL,
+    assaultrifle = ITEM_SPECIAL,
+    broadsword = ITEM_SPECIAL,
+    gravitygun = ITEM_SPECIAL,
+    greenkey = ITEM_SPECIAL,
+}
+
+local function normalizedName(instance)
+    return string.lower(instance.Name):gsub("[^%w]", "")
+end
 
 function Forsaken.new(ctx)
     local self = setmetatable({
         ctx = ctx,
         KillerESP = false,
         GeneratorESP = false,
+        ItemESP = false,
         Elapsed = 0,
     }, Forsaken)
     local RoleChams = ctx.LoadModule("games/RoleChams")
     self.KillerChams = RoleChams.new("BezNigativaForsakenKiller")
     self.GeneratorChams = RoleChams.new("BezNigativaForsakenGenerator")
+    self.ItemChams = RoleChams.new("BezNigativaForsakenItem")
 
     local page = ctx.Window:AddPage("Forsaken", "Функции только для текущей игры")
     local stack = ctx.Window:ModuleStack(page, 70)
@@ -1897,6 +1930,15 @@ function Forsaken.new(ctx)
         ctx.Touch()
     end)
     self:AddHint(generators.Settings, "Жёлтый — не завершён; зелёный — завершён.")
+
+    local items = stack:Add("Подсветка предметов", 126)
+    self.ItemESPControl = ctx.Window:Toggle(items.Settings, UDim2.fromOffset(10, 4), 260, "Предметы на земле", false, function(value)
+        self.ItemESP = value
+        if not value then self.ItemChams:Clear() end
+        self:RefreshHeartbeat()
+        ctx.Touch()
+    end)
+    self:AddHint(items.Settings, "Аптечки, Bloxy Cola, пицца и редкие предметы.")
 
     ctx.Janitor:Add(function()
         if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
@@ -1919,7 +1961,7 @@ function Forsaken:AddHint(parent, text)
 end
 
 function Forsaken:RefreshHeartbeat()
-    local active = self.KillerESP or self.GeneratorESP
+    local active = self.KillerESP or self.GeneratorESP or self.ItemESP
     if active and not self.HeartbeatLoop then
         self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
             self.Elapsed += delta
@@ -1969,6 +2011,11 @@ function Forsaken:GeneratorMap()
     return ingame and ingame:FindFirstChild("Map")
 end
 
+function Forsaken:IngameFolder()
+    local map = self.ctx.Workspace:FindFirstChild("Map")
+    return map and map:FindFirstChild("Ingame")
+end
+
 function Forsaken:IsGenerator(instance)
     return instance:IsA("Model") and string.lower(instance.Name) == "generator"
 end
@@ -1999,15 +2046,59 @@ function Forsaken:ScanGenerators()
     self.GeneratorChams:Finish(seen)
 end
 
+function Forsaken:HasItemAncestor(instance, ingame)
+    local parent = instance.Parent
+    while parent and parent ~= ingame do
+        if ITEM_COLORS[normalizedName(parent)] then return true end
+        parent = parent.Parent
+    end
+    return false
+end
+
+function Forsaken:ItemAdornee(instance)
+    if instance:IsA("Model") or instance:IsA("BasePart") then return instance end
+    local itemRoot = instance:FindFirstChild("ItemRoot", true)
+    if itemRoot and itemRoot:IsA("BasePart") then return itemRoot end
+    local handle = instance:FindFirstChild("Handle", true)
+    if handle and handle:IsA("BasePart") then return handle end
+    return instance:FindFirstChildWhichIsA("Model", true)
+        or instance:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function Forsaken:ScanItems()
+    local seen = {}
+    local ingame = self:IngameFolder()
+    if ingame then
+        local function inspect(instance)
+            local color = ITEM_COLORS[normalizedName(instance)]
+            if color and not self:HasItemAncestor(instance, ingame) then
+                local adornee = self:ItemAdornee(instance)
+                if adornee then self.ItemChams:Show(adornee, color, seen) end
+            end
+        end
+        for _, child in ipairs(ingame:GetChildren()) do
+            -- The level geometry lives in Ingame.Map, while pickups are its
+            -- siblings. Skipping the level keeps this frequent scan cheap.
+            if child.Name ~= "Map" then
+                inspect(child)
+                for _, instance in ipairs(child:GetDescendants()) do inspect(instance) end
+            end
+        end
+    end
+    self.ItemChams:Finish(seen)
+end
+
 function Forsaken:Scan()
     if self.KillerESP then self:ScanKillers() end
     if self.GeneratorESP then self:ScanGenerators() end
+    if self.ItemESP then self:ScanItems() end
 end
 
 function Forsaken:GetConfig()
     return {
         killerESP = self.KillerESP,
         generatorESP = self.GeneratorESP,
+        itemESP = self.ItemESP,
     }
 end
 
@@ -2017,18 +2108,22 @@ function Forsaken:ApplyConfig(data)
     -- independent ESP switches working.
     self.KillerESP = data.killerESP == true or data.killerESP == nil and data.enabled == true
     self.GeneratorESP = data.generatorESP == true
+    self.ItemESP = data.itemESP == true
     self.KillerESPControl.Set(self.KillerESP)
     self.GeneratorESPControl.Set(self.GeneratorESP)
+    self.ItemESPControl.Set(self.ItemESP)
     if not self.KillerESP then self.KillerChams:Clear() end
     if not self.GeneratorESP then self.GeneratorChams:Clear() end
+    if not self.ItemESP then self.ItemChams:Clear() end
     self:RefreshHeartbeat()
 end
 
 function Forsaken:Destroy()
-    self.KillerESP, self.GeneratorESP = false, false
+    self.KillerESP, self.GeneratorESP, self.ItemESP = false, false, false
     self:RefreshHeartbeat()
     self.KillerChams:Clear()
     self.GeneratorChams:Clear()
+    self.ItemChams:Clear()
 end
 
 return Forsaken
