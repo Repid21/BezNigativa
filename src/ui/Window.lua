@@ -74,6 +74,13 @@ local function label(parent, text, position, size, textSize, color, font)
     return item
 end
 
+local function setZIndex(root, value)
+    if root:IsA("GuiObject") then root.ZIndex = value end
+    for _, item in ipairs(root:GetDescendants()) do
+        if item:IsA("GuiObject") then item.ZIndex = value end
+    end
+end
+
 function Window:Tween(object, duration, properties)
     local tween = self.TweenService:Create(
         object,
@@ -165,17 +172,6 @@ function Window.new(player, coreGui, janitor)
     corner(frame, 14)
     stroke(frame, Color3.fromRGB(5, 7, 11), 0.05, 2)
     self.Frame, self.Shadow = frame, shadow
-
-    local lighting = game:GetService("Lighting")
-    local previousBlur = lighting:FindFirstChild("BezNigativaMenuBlur")
-    if previousBlur then previousBlur:Destroy() end
-    local blur = Instance.new("BlurEffect")
-    blur.Name = "BezNigativaMenuBlur"
-    blur.Size = 9
-    blur.Enabled = true
-    blur.Parent = lighting
-    self.Blur = blur
-    janitor:Add(blur)
 
     local uiScale = Instance.new("UIScale")
     uiScale.Parent = frame
@@ -356,19 +352,17 @@ function Window:SetVisible(value)
     value = value == true
     if self.Visible == value then return end
     self.Visible = value
+    if not value and self.ActivePopupClose then self.ActivePopupClose() end
     if value then
         self.Gui.Enabled = true
         self.Frame.Position += UDim2.fromOffset(0, 10)
         self.Frame.BackgroundTransparency = 0.3
         self.Shadow.ImageTransparency = 1
-        if self.Blur then self.Blur.Enabled = true; self.Blur.Size = 0 end
         self:Tween(self.Frame, 0.2, {Position = self.Frame.Position - UDim2.fromOffset(0, 10), BackgroundTransparency = 0.13})
         self:Tween(self.Shadow, 0.24, {ImageTransparency = 0.16})
-        if self.Blur then self:Tween(self.Blur, 0.22, {Size = 9}) end
     else
         local tween = self:Tween(self.Frame, 0.14, {Position = self.Frame.Position + UDim2.fromOffset(0, 8), BackgroundTransparency = 0.3})
         self:Tween(self.Shadow, 0.12, {ImageTransparency = 1})
-        if self.Blur then self:Tween(self.Blur, 0.14, {Size = 0}) end
         local connection
         connection = tween.Completed:Connect(function()
             connection:Disconnect()
@@ -377,7 +371,6 @@ function Window:SetVisible(value)
             self.Frame.Position -= UDim2.fromOffset(0, 8)
             self.Frame.BackgroundTransparency = 0.13
             self.Shadow.ImageTransparency = 0.16
-            if self.Blur then self.Blur.Enabled = false end
         end)
     end
 end
@@ -489,6 +482,7 @@ end
 
 function Window:ShowPage(name)
     if not self.pages[name] then return end
+    if self.ActivePage ~= name and self.ActivePopupClose then self.ActivePopupClose() end
     self.ActivePage = name
     for pageName, page in pairs(self.pages) do
         local active = pageName == name
@@ -746,6 +740,17 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
     corner(knob, 6)
     stroke(knob, Theme.Accent, 0.15)
 
+    local hitbox = Instance.new("TextButton")
+    hitbox.Name = "SliderHitbox"
+    hitbox.Position = UDim2.fromOffset(3, 4)
+    hitbox.Size = UDim2.new(1, -66, 0, 24)
+    hitbox.BackgroundTransparency = 1
+    hitbox.BorderSizePixel = 0
+    hitbox.AutoButtonColor = false
+    hitbox.Text = ""
+    hitbox.ZIndex = track.ZIndex + 2
+    hitbox.Parent = field
+
     local box = Instance.new("TextBox")
     box.AnchorPoint = Vector2.new(1, 0)
     box.Position = UDim2.new(1, -7, 0, 5)
@@ -784,7 +789,7 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
         local ratio = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
         set(minimum + (maximum - minimum) * ratio)
     end
-    self.janitor:Add(track.InputBegan:Connect(function(input)
+    self.janitor:Add(hitbox.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true; setFromInput(input) end
     end))
     self.janitor:Add(self.UserInputService.InputChanged:Connect(function(input)
@@ -795,7 +800,305 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
     end))
     self.janitor:Add(box.FocusLost:Connect(function() set(box.Text) end))
     set(value, false)
-    return {Set = function(newValue) set(newValue, false) end, Get = function() return value end, Box = box}
+    return {Set = function(newValue) set(newValue, false) end, Get = function() return value end, Box = box, Hitbox = hitbox}
+end
+
+function Window:ColorPicker(parent, position, width, text, initial, callback)
+    local color = typeof(initial) == "Color3" and initial or Color3.new(1, 1, 1)
+    local hue, saturation, brightness = color:ToHSV()
+    local popup, popupShadow, hueBase, svCursor, hueCursor, hexBox, popupPreview, popupTabPreview
+    local draggingSV, draggingHue = false, false
+
+    local button = Instance.new("TextButton")
+    button.Position = position
+    button.Size = UDim2.fromOffset(width or 260, 34)
+    button.BackgroundColor3 = Theme.SurfaceHover
+    button.BackgroundTransparency = 1
+    button.BorderSizePixel = 0
+    button.AutoButtonColor = false
+    button.Text = ""
+    button.Parent = parent
+    corner(button, 6)
+    local title = label(button, text or "Color", UDim2.fromOffset(10, 0), UDim2.new(1, -72, 1, 0), 11, Theme.RowText, Enum.Font.GothamMedium)
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    local preview = Instance.new("Frame")
+    preview.Name = "Preview"
+    preview.AnchorPoint = Vector2.new(1, 0.5)
+    preview.Position = UDim2.new(1, -12, 0.5, 0)
+    preview.Size = UDim2.fromOffset(19, 19)
+    preview.BackgroundColor3 = color
+    preview.BorderSizePixel = 0
+    preview.Parent = button
+    corner(preview, 5)
+    stroke(preview, Color3.fromRGB(255, 255, 255), 0.72)
+    local arrow = label(button, ">", UDim2.new(1, -54, 0, 0), UDim2.fromOffset(20, 34), 12, Theme.TextDim, Enum.Font.GothamBold)
+    arrow.TextXAlignment = Enum.TextXAlignment.Center
+
+    local function hex(value)
+        local r, g, b = math.floor(value.R * 255 + 0.5), math.floor(value.G * 255 + 0.5), math.floor(value.B * 255 + 0.5)
+        return string.format("#%02X%02X%02X", r, g, b)
+    end
+
+    local function refreshPopup()
+        if not popup then return end
+        hueBase.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+        svCursor.Position = UDim2.fromScale(saturation, 1 - brightness)
+        hueCursor.Position = UDim2.new(hue, 0, 0.5, 0)
+        if not hexBox:IsFocused() then hexBox.Text = hex(color) end
+    end
+
+    local function set(newColor, fireCallback)
+        if typeof(newColor) ~= "Color3" then return end
+        color = newColor
+        hue, saturation, brightness = color:ToHSV()
+        preview.BackgroundColor3 = color
+        if popupPreview then popupPreview.BackgroundColor3 = color end
+        if popupTabPreview then popupTabPreview.BackgroundColor3 = color end
+        refreshPopup()
+        if fireCallback ~= false and callback then callback(color) end
+    end
+
+    local function close()
+        draggingSV, draggingHue = false, false
+        if popup then popup.Visible = false end
+        if popupShadow then popupShadow.Visible = false end
+        self:Tween(arrow, 0.14, {Rotation = 0})
+        if self.ActivePopupClose == close then self.ActivePopupClose = nil end
+    end
+
+    local function buildPopup()
+        popupShadow = Instance.new("ImageLabel")
+        popupShadow.Name = "ColorPickerShadow"
+        popupShadow.Position = UDim2.fromOffset(BASE_WIDTH - 330, 52)
+        popupShadow.Size = UDim2.fromOffset(322, 414)
+        popupShadow.BackgroundTransparency = 1
+        popupShadow.Image = "rbxassetid://1316045217"
+        popupShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+        popupShadow.ImageTransparency = 0.22
+        popupShadow.ScaleType = Enum.ScaleType.Slice
+        popupShadow.SliceCenter = Rect.new(10, 10, 118, 118)
+        popupShadow.ZIndex = 49
+        popupShadow.Parent = self.Frame
+
+        popup = Instance.new("Frame")
+        popup.Name = "ColorPickerPopup"
+        popup.Position = UDim2.fromOffset(BASE_WIDTH - 316, 66)
+        popup.Size = UDim2.fromOffset(294, 386)
+        popup.BackgroundColor3 = Color3.fromRGB(20, 20, 29)
+        popup.BackgroundTransparency = 0.02
+        popup.BorderSizePixel = 0
+        popup.ZIndex = 50
+        popup.Parent = self.Frame
+        corner(popup, 16)
+        stroke(popup, Color3.fromRGB(57, 61, 76), 0.18)
+
+        local tab = Instance.new("Frame")
+        tab.Position = UDim2.fromOffset(13, 12)
+        tab.Size = UDim2.fromOffset(98, 31)
+        tab.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+        tab.BorderSizePixel = 0
+        tab.Parent = popup
+        corner(tab, 8)
+        popupTabPreview = Instance.new("Frame")
+        popupTabPreview.Position = UDim2.fromOffset(10, 7)
+        popupTabPreview.Size = UDim2.fromOffset(17, 17)
+        popupTabPreview.BackgroundColor3 = color
+        popupTabPreview.BorderSizePixel = 0
+        popupTabPreview.Parent = tab
+        corner(popupTabPreview, 5)
+        label(tab, "Primary", UDim2.fromOffset(35, 0), UDim2.new(1, -39, 1, 0), 11, Color3.fromRGB(213, 215, 225), Enum.Font.GothamMedium)
+        local secondary = Instance.new("Frame")
+        secondary.Position = UDim2.fromOffset(120, 19)
+        secondary.Size = UDim2.fromOffset(18, 18)
+        secondary.BackgroundColor3 = Color3.fromRGB(101, 76, 224)
+        secondary.BorderSizePixel = 0
+        secondary.Parent = popup
+        corner(secondary, 5)
+
+        local closeButton = Instance.new("TextButton")
+        closeButton.Position = UDim2.new(1, -38, 0, 10)
+        closeButton.Size = UDim2.fromOffset(28, 28)
+        closeButton.BackgroundTransparency = 1
+        closeButton.BorderSizePixel = 0
+        closeButton.Text = "×"
+        closeButton.TextColor3 = Theme.TextDim
+        closeButton.TextSize = 17
+        closeButton.Font = Enum.Font.GothamMedium
+        closeButton.Parent = popup
+        self.janitor:Add(closeButton.MouseButton1Click:Connect(close))
+
+        hueBase = Instance.new("Frame")
+        hueBase.Name = "SaturationValue"
+        hueBase.Position = UDim2.fromOffset(13, 53)
+        hueBase.Size = UDim2.fromOffset(268, 224)
+        hueBase.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+        hueBase.BorderSizePixel = 0
+        hueBase.ClipsDescendants = true
+        hueBase.Parent = popup
+        corner(hueBase, 9)
+
+        local white = Instance.new("Frame")
+        white.Size = UDim2.fromScale(1, 1)
+        white.BackgroundColor3 = Color3.new(1, 1, 1)
+        white.BorderSizePixel = 0
+        white.Parent = hueBase
+        local whiteGradient = Instance.new("UIGradient")
+        whiteGradient.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)})
+        whiteGradient.Parent = white
+        local black = Instance.new("Frame")
+        black.Size = UDim2.fromScale(1, 1)
+        black.BackgroundColor3 = Color3.new(0, 0, 0)
+        black.BorderSizePixel = 0
+        black.Parent = hueBase
+        local blackGradient = Instance.new("UIGradient")
+        blackGradient.Rotation = 90
+        blackGradient.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0)})
+        blackGradient.Parent = black
+
+        svCursor = Instance.new("Frame")
+        svCursor.Name = "Cursor"
+        svCursor.AnchorPoint = Vector2.new(0.5, 0.5)
+        svCursor.Position = UDim2.fromScale(saturation, 1 - brightness)
+        svCursor.Size = UDim2.fromOffset(13, 13)
+        svCursor.BackgroundTransparency = 1
+        svCursor.BorderSizePixel = 0
+        svCursor.Parent = hueBase
+        corner(svCursor, 8)
+        stroke(svCursor, Color3.fromRGB(244, 246, 251), 0, 2)
+        local svHitbox = Instance.new("TextButton")
+        svHitbox.Size = UDim2.fromScale(1, 1)
+        svHitbox.BackgroundTransparency = 1
+        svHitbox.BorderSizePixel = 0
+        svHitbox.Text = ""
+        svHitbox.Parent = hueBase
+
+        local hueBar = Instance.new("Frame")
+        hueBar.Name = "Hue"
+        hueBar.Position = UDim2.fromOffset(13, 290)
+        hueBar.Size = UDim2.fromOffset(268, 13)
+        hueBar.BackgroundColor3 = Color3.new(1, 1, 1)
+        hueBar.BorderSizePixel = 0
+        hueBar.ClipsDescendants = false
+        hueBar.Parent = popup
+        corner(hueBar, 6)
+        local hueGradient = Instance.new("UIGradient")
+        hueGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 1, 1)),
+            ColorSequenceKeypoint.new(1 / 6, Color3.fromHSV(1 / 6, 1, 1)),
+            ColorSequenceKeypoint.new(2 / 6, Color3.fromHSV(2 / 6, 1, 1)),
+            ColorSequenceKeypoint.new(3 / 6, Color3.fromHSV(3 / 6, 1, 1)),
+            ColorSequenceKeypoint.new(4 / 6, Color3.fromHSV(4 / 6, 1, 1)),
+            ColorSequenceKeypoint.new(5 / 6, Color3.fromHSV(5 / 6, 1, 1)),
+            ColorSequenceKeypoint.new(1, Color3.fromHSV(1, 1, 1)),
+        })
+        hueGradient.Parent = hueBar
+        hueCursor = Instance.new("Frame")
+        hueCursor.AnchorPoint = Vector2.new(0.5, 0.5)
+        hueCursor.Position = UDim2.new(hue, 0, 0.5, 0)
+        hueCursor.Size = UDim2.fromOffset(6, 21)
+        hueCursor.BackgroundColor3 = Color3.fromRGB(247, 248, 252)
+        hueCursor.BorderSizePixel = 0
+        hueCursor.Parent = hueBar
+        corner(hueCursor, 3)
+        stroke(hueCursor, Color3.fromRGB(25, 27, 36), 0.2)
+        local hueHitbox = Instance.new("TextButton")
+        hueHitbox.Position = UDim2.fromOffset(0, -6)
+        hueHitbox.Size = UDim2.new(1, 0, 1, 12)
+        hueHitbox.BackgroundTransparency = 1
+        hueHitbox.BorderSizePixel = 0
+        hueHitbox.Text = ""
+        hueHitbox.Parent = hueBar
+
+        label(popup, "HEX", UDim2.fromOffset(14, 326), UDim2.fromOffset(46, 42), 10, Theme.TextMuted, Enum.Font.GothamMedium)
+        local hexField = Instance.new("Frame")
+        hexField.Position = UDim2.fromOffset(78, 322)
+        hexField.Size = UDim2.fromOffset(203, 42)
+        hexField.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+        hexField.BorderSizePixel = 0
+        hexField.Parent = popup
+        corner(hexField, 8)
+        popupPreview = Instance.new("Frame")
+        popupPreview.Position = UDim2.fromOffset(10, 10)
+        popupPreview.Size = UDim2.fromOffset(22, 22)
+        popupPreview.BackgroundColor3 = color
+        popupPreview.BorderSizePixel = 0
+        popupPreview.Parent = hexField
+        corner(popupPreview, 6)
+        hexBox = Instance.new("TextBox")
+        hexBox.Position = UDim2.fromOffset(42, 0)
+        hexBox.Size = UDim2.new(1, -50, 1, 0)
+        hexBox.BackgroundTransparency = 1
+        hexBox.BorderSizePixel = 0
+        hexBox.ClearTextOnFocus = false
+        hexBox.Font = Enum.Font.GothamMedium
+        hexBox.Text = hex(color)
+        hexBox.TextColor3 = Theme.TextMuted
+        hexBox.TextSize = 11
+        hexBox.TextXAlignment = Enum.TextXAlignment.Left
+        hexBox.Parent = hexField
+
+        local function updateSV(input)
+            local x = math.clamp((input.Position.X - hueBase.AbsolutePosition.X) / math.max(hueBase.AbsoluteSize.X, 1), 0, 1)
+            local y = math.clamp((input.Position.Y - hueBase.AbsolutePosition.Y) / math.max(hueBase.AbsoluteSize.Y, 1), 0, 1)
+            set(Color3.fromHSV(hue, x, 1 - y))
+        end
+        local function updateHue(input)
+            hue = math.clamp((input.Position.X - hueBar.AbsolutePosition.X) / math.max(hueBar.AbsoluteSize.X, 1), 0, 1)
+            set(Color3.fromHSV(hue, saturation, brightness))
+        end
+        self.janitor:Add(svHitbox.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingSV = true; updateSV(input) end
+        end))
+        self.janitor:Add(hueHitbox.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingHue = true; updateHue(input) end
+        end))
+        self.janitor:Add(self.UserInputService.InputChanged:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if draggingSV then updateSV(input) elseif draggingHue then updateHue(input) end
+        end))
+        self.janitor:Add(self.UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingSV, draggingHue = false, false end
+        end))
+        self.janitor:Add(hexBox.FocusLost:Connect(function()
+            local value = hexBox.Text:gsub("#", ""):gsub("[^%x]", "")
+            if #value == 6 then
+                local r, g, b = tonumber(value:sub(1, 2), 16), tonumber(value:sub(3, 4), 16), tonumber(value:sub(5, 6), 16)
+                if r and g and b then set(Color3.fromRGB(r, g, b)); return end
+            end
+            hexBox.Text = hex(color)
+        end))
+        setZIndex(popup, 51)
+        popup.ZIndex = 50
+        svCursor.ZIndex, hueCursor.ZIndex = 54, 54
+        refreshPopup()
+    end
+
+    local function open()
+        if popup and popup.Visible then close(); return end
+        if self.ActivePopupClose and self.ActivePopupClose ~= close then self.ActivePopupClose() end
+        if not popup then buildPopup() end
+        popup.Visible, popupShadow.Visible = true, true
+        self.ActivePopupClose = close
+        self:Tween(arrow, 0.14, {Rotation = 90})
+        popup.Position = UDim2.fromOffset(BASE_WIDTH - 306, 66)
+        popup.BackgroundTransparency = 0.18
+        self:Tween(popup, 0.16, {Position = UDim2.fromOffset(BASE_WIDTH - 316, 66), BackgroundTransparency = 0.02})
+    end
+
+    self.janitor:Add(button.MouseEnter:Connect(function() self:Tween(button, 0.12, {BackgroundTransparency = 0.72}) end))
+    self.janitor:Add(button.MouseLeave:Connect(function() self:Tween(button, 0.16, {BackgroundTransparency = 1}) end))
+    self.janitor:Add(button.MouseButton1Click:Connect(open))
+    self.janitor:Add(self.UserInputService.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Escape then close(); return end
+        if not popup or not popup.Visible or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        local point = input.Position
+        local function contains(guiObject)
+            local p, s = guiObject.AbsolutePosition, guiObject.AbsoluteSize
+            return point.X >= p.X and point.X <= p.X + s.X and point.Y >= p.Y and point.Y <= p.Y + s.Y
+        end
+        if not contains(popup) and not contains(button) then close() end
+    end))
+    return {Set = function(newColor) set(newColor, false) end, Get = function() return color end, Button = button, Close = close}
 end
 
 function Window:Button(parent, position, size, text, callback, color)

@@ -35,6 +35,7 @@ function Visuals.new(ctx)
         Chams = false, ChamsTransparency = 0.35,
         Lighting = false, LightR = 255, LightG = 220, LightB = 190, LightStrength = 15,
     }, Visuals)
+    self:EnsureLightingEffect()
 
     local page = ctx.Window:AddPage("Visuals", "ESP, NameTags, Chams и освещение")
     local stack = ctx.Window:ModuleStack(page, 70)
@@ -52,24 +53,30 @@ function Visuals.new(ctx)
     self.ChamsControl = ctx.Window:Toggle(chams.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Chams = v; self:RefreshRenderLoop(); ctx.Touch() end)
     self.TransparencyControl = ctx.Window:Slider(chams.Settings, 48, "Transparency", 35, 0, 100, 1, function(v) self.ChamsTransparency = v / 100; ctx.Touch() end)
 
-    local lighting = stack:Add("Lighting", 252)
-    self.LightingControl = ctx.Window:Toggle(lighting.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v) self.Lighting = v; self:UpdateLighting(); ctx.Touch() end)
-    self.RControl = ctx.Window:Slider(lighting.Settings, 48, "Red", 255, 0, 255, 1, function(v) self.LightR = v; self:UpdateLighting(); ctx.Touch() end)
-    self.GControl = ctx.Window:Slider(lighting.Settings, 88, "Green", 220, 0, 255, 1, function(v) self.LightG = v; self:UpdateLighting(); ctx.Touch() end)
-    self.BControl = ctx.Window:Slider(lighting.Settings, 128, "Blue", 190, 0, 255, 1, function(v) self.LightB = v; self:UpdateLighting(); ctx.Touch() end)
-    self.StrengthControl = ctx.Window:Slider(lighting.Settings, 168, "Strength", 15, -100, 100, 1, function(v) self.LightStrength = v; self:UpdateLighting(); ctx.Touch() end)
-
-    local effect = Instance.new("ColorCorrectionEffect")
-    effect.Name = "BezNigativaLighting"
-    effect.Enabled = false
-    effect.Parent = ctx.Lighting
-    ctx.Janitor:Add(effect)
-    self.Effect = effect
+    local lighting = stack:Add("Lighting", 172)
+    self.LightingControl = ctx.Window:Toggle(lighting.Settings, UDim2.fromOffset(10, 4), 190, "Enabled", false, function(v)
+        self.Lighting = v
+        self:UpdateLighting()
+        self:RefreshLightingLoop()
+        ctx.Touch()
+    end)
+    self.ColorControl = ctx.Window:ColorPicker(lighting.Settings, UDim2.fromOffset(10, 48), 260, "Tint color", Color3.fromRGB(self.LightR, self.LightG, self.LightB), function(value)
+        self.LightR = math.round(value.R * 255)
+        self.LightG = math.round(value.G * 255)
+        self.LightB = math.round(value.B * 255)
+        self:UpdateLighting()
+        ctx.Touch()
+    end)
+    self.StrengthControl = ctx.Window:Slider(lighting.Settings, 88, "Strength", 15, -100, 100, 1, function(v) self.LightStrength = v; self:UpdateLighting(); ctx.Touch() end)
 
     ctx.Janitor:Add(ctx.Players.PlayerRemoving:Connect(function(player) self:Remove(player) end))
     ctx.Janitor:Add(function()
         if self.RenderLoop then self.RenderLoop:Disconnect(); self.RenderLoop = nil end
+        if self.LightingLoop then self.LightingLoop:Disconnect(); self.LightingLoop = nil end
     end)
+    ctx.Janitor:Add(ctx.Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+        if self.Lighting then self:UpdateLighting() end
+    end))
     return self
 end
 
@@ -297,11 +304,51 @@ function Visuals:Step()
     end
 end
 
+function Visuals:EnsureLightingEffect()
+    local parent = self.ctx.Workspace.CurrentCamera or self.ctx.Lighting
+    if self.Effect and self.Effect.Parent then
+        if self.Effect.Parent ~= parent then self.Effect.Parent = parent end
+        return self.Effect
+    end
+
+    local effect = Instance.new("ColorCorrectionEffect")
+    effect.Name = "BezNigativaLighting"
+    effect.Enabled = false
+    effect.Brightness = 0
+    effect.Contrast = 0
+    effect.Saturation = 0
+    effect.TintColor = Color3.new(1, 1, 1)
+    effect.Parent = parent
+    self.ctx.Janitor:Add(effect)
+    self.Effect = effect
+    return effect
+end
+
 function Visuals:UpdateLighting()
-    if not self.Effect or not self.Effect.Parent then return end
-    self.Effect.Enabled = self.Lighting
-    self.Effect.TintColor = Color3.fromRGB(self.LightR, self.LightG, self.LightB)
-    self.Effect.Brightness = self.LightStrength / 100
+    local effect = self:EnsureLightingEffect()
+    effect.Enabled = self.Lighting
+    if not self.Lighting then return end
+    effect.TintColor = Color3.fromRGB(self.LightR, self.LightG, self.LightB)
+    effect.Brightness = math.clamp(self.LightStrength / 100, -1, 1)
+end
+
+function Visuals:RefreshLightingLoop()
+    if self.Lighting and not self.LightingLoop then
+        self.LightingElapsed = 0
+        self.LightingLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
+            self.LightingElapsed += delta
+            if self.LightingElapsed < 0.2 then return end
+            self.LightingElapsed = 0
+            local ok, message = pcall(function() self:UpdateLighting() end)
+            if not ok and not self.LightingWarned then
+                self.LightingWarned = true
+                warn("[BezNigativa/Lighting] " .. tostring(message))
+            end
+        end)
+    elseif not self.Lighting and self.LightingLoop then
+        self.LightingLoop:Disconnect()
+        self.LightingLoop = nil
+    end
 end
 
 function Visuals:GetConfig()
@@ -327,13 +374,19 @@ function Visuals:ApplyConfig(data)
     self.ESPControl.Set(self.ESP); self.HealthControl.Set(self.Health); self.TagsControl.Set(self.NameTags)
     self.DisplayControl.Set(self.ShowDisplay); self.RealControl.Set(self.ShowReal); self.DistanceControl.Set(self.ShowDistance)
     self.ChamsControl.Set(self.Chams); self.TransparencyControl.Set(self.ChamsTransparency * 100)
-    self.LightingControl.Set(self.Lighting); self.RControl.Set(self.LightR); self.GControl.Set(self.LightG)
-    self.BControl.Set(self.LightB); self.StrengthControl.Set(self.LightStrength); self:UpdateLighting()
+    self.LightingControl.Set(self.Lighting)
+    self.ColorControl.Set(Color3.fromRGB(self.LightR, self.LightG, self.LightB))
+    self.StrengthControl.Set(self.LightStrength)
+    self:UpdateLighting()
+    self:RefreshLightingLoop()
     self:RefreshRenderLoop()
 end
 
 function Visuals:Destroy()
     if self.RenderLoop then self.RenderLoop:Disconnect(); self.RenderLoop = nil end
+    if self.LightingLoop then self.LightingLoop:Disconnect(); self.LightingLoop = nil end
+    self.Lighting = false
+    if self.Effect and self.Effect.Parent then self.Effect.Enabled = false end
     self:ResetBundles()
 end
 
