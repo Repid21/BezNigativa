@@ -110,8 +110,8 @@ function App.start(loadModule)
 
     self.Window:ShowPage("Combat")
     self.Janitor:Add(services.UserInputService.InputBegan:Connect(function(input, processed)
-        if not processed and input.KeyCode == Enum.KeyCode.RightShift and self.Window.Gui then
-            self.Window.Gui.Enabled = not self.Window.Gui.Enabled
+        if not processed and input.KeyCode == Enum.KeyCode.RightShift and self.Window then
+            self.Window:ToggleVisible()
         end
     end))
     environment.BezNigativaCleanup = function() self:Destroy(true) end

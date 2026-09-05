@@ -42,6 +42,9 @@ function Forsaken.new(ctx)
         KillerESP = false,
         GeneratorESP = false,
         ItemESP = false,
+        InfiniteStamina = false,
+        AutoGenerator = false,
+        RepairDelay = 3,
         Elapsed = 0,
     }, Forsaken)
     local RoleChams = ctx.LoadModule("games/RoleChams")
@@ -78,15 +81,38 @@ function Forsaken.new(ctx)
     end)
     self:AddHint(items.Settings, "Аптечки, Bloxy Cola, пицца и редкие предметы.")
 
+    local stamina = stack:Add("Infinite Stamina", 126)
+    self.InfiniteStaminaControl = ctx.Window:Toggle(stamina.Settings, UDim2.fromOffset(10, 4), 260, "Бесконечная стамина", false, function(value)
+        self.InfiniteStamina = value
+        if value then self:ApplyInfiniteStamina() else self:RestoreStamina() end
+        self:RefreshHeartbeat()
+        ctx.Touch()
+    end)
+    self:AddHint(stamina.Settings, "Стамина не расходуется во время спринта.")
+
+    local autoGenerator = stack:Add("Auto Generator", 166)
+    self.AutoGeneratorControl = ctx.Window:Toggle(autoGenerator.Settings, UDim2.fromOffset(10, 4), 260, "Автопочинка", false, function(value)
+        self.AutoGenerator = value
+        self:ResetAutoGenerator()
+        self:RefreshHeartbeat()
+        ctx.Touch()
+    end)
+    self.RepairDelayControl = ctx.Window:Slider(autoGenerator.Settings, 48, "Задержка (сек)", self.RepairDelay, 0.5, 10, 0.5, function(value)
+        self.RepairDelay = value
+        self:ResetAutoGenerator()
+        ctx.Touch()
+    end)
+    self:AddHint(autoGenerator.Settings, "Подойдите к генератору: меньшая задержка чинит быстрее.", 88)
+
     ctx.Janitor:Add(function()
         if self.HeartbeatLoop then self.HeartbeatLoop:Disconnect(); self.HeartbeatLoop = nil end
     end)
     return self
 end
 
-function Forsaken:AddHint(parent, text)
+function Forsaken:AddHint(parent, text, y)
     local hint = Instance.new("TextLabel")
-    hint.Position = UDim2.fromOffset(10, 48)
+    hint.Position = UDim2.fromOffset(10, y or 48)
     hint.Size = UDim2.new(1, -20, 0, 38)
     hint.BackgroundTransparency = 1
     hint.Font = Enum.Font.Code
@@ -99,7 +125,7 @@ function Forsaken:AddHint(parent, text)
 end
 
 function Forsaken:RefreshHeartbeat()
-    local active = self.KillerESP or self.GeneratorESP or self.ItemESP
+    local active = self.KillerESP or self.GeneratorESP or self.ItemESP or self.InfiniteStamina or self.AutoGenerator
     if active and not self.HeartbeatLoop then
         self.HeartbeatLoop = self.ctx.RunService.Heartbeat:Connect(function(delta)
             self.Elapsed += delta
@@ -167,6 +193,66 @@ function Forsaken:GeneratorProgress(generator)
     return tonumber(progress)
 end
 
+function Forsaken:GeneratorPart(generator)
+    if generator.PrimaryPart then return generator.PrimaryPart end
+    local main = generator:FindFirstChild("Main", true)
+    if main and main:IsA("BasePart") then return main end
+    return generator:FindFirstChildWhichIsA("BasePart", true)
+end
+
+function Forsaken:FindRepairGenerator()
+    local survivors = self:RoleFolders()
+    if not self:IsLocalSurvivor(survivors) then return nil end
+
+    local map = self:GeneratorMap()
+    local character = self.ctx.LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not map or not root then return nil end
+
+    local closest, closestDistance
+    for _, generator in ipairs(map:GetChildren()) do
+        if self:IsGenerator(generator) then
+            local progress = self:GeneratorProgress(generator)
+            local completed = generator:GetAttribute("Completed") == true
+                or generator:GetAttribute("Finished") == true
+                or progress ~= nil and progress >= 100
+            local part = not completed and self:GeneratorPart(generator)
+            if part then
+                local distance = (root.Position - part.Position).Magnitude
+                if distance <= 18 and (not closestDistance or distance < closestDistance) then
+                    closest, closestDistance = generator, distance
+                end
+            end
+        end
+    end
+    return closest
+end
+
+function Forsaken:ResetAutoGenerator()
+    self.RepairGenerator = nil
+    self.NextRepairAt = nil
+end
+
+function Forsaken:TryAutoGenerator()
+    local generator = self:FindRepairGenerator()
+    if generator ~= self.RepairGenerator then
+        self.RepairGenerator = generator
+        self.NextRepairAt = generator and os.clock() + self.RepairDelay or nil
+        return
+    end
+    if not generator or os.clock() < (self.NextRepairAt or math.huge) then return end
+
+    local remotes = generator:FindFirstChild("Remotes")
+    local remote = remotes and remotes:FindFirstChild("RE")
+    if not remote or not remote:IsA("RemoteEvent") then
+        self:ResetAutoGenerator()
+        return
+    end
+
+    remote:FireServer()
+    self.NextRepairAt = os.clock() + self.RepairDelay
+end
+
 function Forsaken:ScanGenerators()
     local seen = {}
     local map = self:GeneratorMap()
@@ -226,7 +312,56 @@ function Forsaken:ScanItems()
     self.ItemChams:Finish(seen)
 end
 
+function Forsaken:GetSprintingModule()
+    local systems = self.ctx.ReplicatedStorage:FindFirstChild("Systems")
+    local character = systems and systems:FindFirstChild("Character")
+    local gameFolder = character and character:FindFirstChild("Game")
+    local scriptModule = gameFolder and gameFolder:FindFirstChild("Sprinting")
+    if not scriptModule or not scriptModule:IsA("ModuleScript") then return nil end
+    if self.SprintingScript == scriptModule and self.SprintingModule then return self.SprintingModule end
+
+    if self.SprintingModule then self:RestoreStamina() end
+    self.SprintingScript, self.SprintingModule = scriptModule, nil
+    local ok, module = pcall(require, scriptModule)
+    if ok and type(module) == "table" then self.SprintingModule = module end
+    return self.SprintingModule
+end
+
+function Forsaken:FireStaminaChanged(module)
+    local event = module and (module.__staminaChangedEvent or module.StaminaChanged)
+    if event then pcall(function() event:Fire(module.Stamina) end) end
+end
+
+function Forsaken:ApplyInfiniteStamina()
+    if not self.InfiniteStamina then return end
+    local module = self:GetSprintingModule()
+    if not module then return end
+    if not self.OriginalStamina or self.OriginalStamina.module ~= module then
+        self.OriginalStamina = {
+            module = module,
+            lossDisabled = module.StaminaLossDisabled,
+        }
+    end
+    local changed = module.StaminaLossDisabled ~= true
+    module.StaminaLossDisabled = true
+    if type(module.MaxStamina) == "number" and module.Stamina ~= module.MaxStamina then
+        module.Stamina = module.MaxStamina
+        changed = true
+    end
+    if changed then self:FireStaminaChanged(module) end
+end
+
+function Forsaken:RestoreStamina()
+    local original = self.OriginalStamina
+    if not original then return end
+    original.module.StaminaLossDisabled = original.lossDisabled
+    self:FireStaminaChanged(original.module)
+    self.OriginalStamina = nil
+end
+
 function Forsaken:Scan()
+    if self.InfiniteStamina then self:ApplyInfiniteStamina() end
+    if self.AutoGenerator then self:TryAutoGenerator() end
     if self.KillerESP then self:ScanKillers() end
     if self.GeneratorESP then self:ScanGenerators() end
     if self.ItemESP then self:ScanItems() end
@@ -237,6 +372,9 @@ function Forsaken:GetConfig()
         killerESP = self.KillerESP,
         generatorESP = self.GeneratorESP,
         itemESP = self.ItemESP,
+        infiniteStamina = self.InfiniteStamina,
+        autoGenerator = self.AutoGenerator,
+        repairDelay = self.RepairDelay,
     }
 end
 
@@ -247,17 +385,27 @@ function Forsaken:ApplyConfig(data)
     self.KillerESP = data.killerESP == true or data.killerESP == nil and data.enabled == true
     self.GeneratorESP = data.generatorESP == true
     self.ItemESP = data.itemESP == true
+    self.InfiniteStamina = data.infiniteStamina == true
+    self.AutoGenerator = data.autoGenerator == true
+    self.RepairDelay = math.clamp(tonumber(data.repairDelay) or self.RepairDelay, 0.5, 10)
     self.KillerESPControl.Set(self.KillerESP)
     self.GeneratorESPControl.Set(self.GeneratorESP)
     self.ItemESPControl.Set(self.ItemESP)
+    self.InfiniteStaminaControl.Set(self.InfiniteStamina)
+    self.AutoGeneratorControl.Set(self.AutoGenerator)
+    self.RepairDelayControl.Set(self.RepairDelay)
     if not self.KillerESP then self.KillerChams:Clear() end
     if not self.GeneratorESP then self.GeneratorChams:Clear() end
     if not self.ItemESP then self.ItemChams:Clear() end
+    if self.InfiniteStamina then self:ApplyInfiniteStamina() else self:RestoreStamina() end
+    self:ResetAutoGenerator()
     self:RefreshHeartbeat()
 end
 
 function Forsaken:Destroy()
-    self.KillerESP, self.GeneratorESP, self.ItemESP = false, false, false
+    self.KillerESP, self.GeneratorESP, self.ItemESP, self.InfiniteStamina, self.AutoGenerator = false, false, false, false, false
+    self:ResetAutoGenerator()
+    self:RestoreStamina()
     self:RefreshHeartbeat()
     self.KillerChams:Clear()
     self.GeneratorChams:Clear()
