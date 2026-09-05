@@ -14,6 +14,11 @@ local function inputName(input)
     return nil
 end
 
+local function isTyping(ctx)
+    local ok, focused = pcall(function() return ctx.UserInputService:GetFocusedTextBox() end)
+    return ok and focused ~= nil
+end
+
 function Combat.new(ctx)
     local self = setmetatable({
         ctx = ctx,
@@ -96,7 +101,7 @@ function Combat.new(ctx)
     circleStroke.Parent = fovCircle
     self.FovCircle = fovCircle
 
-    ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input, processed)
+    ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input)
         if self.Capturing then
             if input.KeyCode == Enum.KeyCode.Escape then
                 self.Capturing = false
@@ -109,7 +114,9 @@ function Combat.new(ctx)
             self:DrawBind()
             return
         end
-        if processed or inputName(input) ~= self.Bind then return end
+        -- Do not discard keys consumed by the game: users can intentionally
+        -- share a key between a game action and an AimBot bind.
+        if isTyping(ctx) or inputName(input) ~= self.Bind then return end
         if self.Mode == "Hold" then self.Held = true else self.Toggled = not self.Toggled end
     end))
     ctx.Janitor:Add(ctx.UserInputService.InputEnded:Connect(function(input)

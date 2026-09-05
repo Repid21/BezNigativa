@@ -14,6 +14,11 @@ local function inputName(input)
     return nil
 end
 
+local function isTyping(ctx)
+    local ok, focused = pcall(function() return ctx.UserInputService:GetFocusedTextBox() end)
+    return ok and focused ~= nil
+end
+
 local BINDABLE = {"Speed", "Jump", "Noclip", "Fly"}
 
 function Movement.new(ctx)
@@ -68,8 +73,8 @@ function Movement.new(ctx)
         self:DisconnectHumanoid()
         task.defer(function() self:WatchHumanoid(); self:ApplyHumanoid() end)
     end))
-    ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input, processed)
-        self:HandleBindBegan(input, processed)
+    ctx.Janitor:Add(ctx.UserInputService.InputBegan:Connect(function(input)
+        self:HandleBindBegan(input)
     end))
     ctx.Janitor:Add(ctx.UserInputService.InputEnded:Connect(function(input)
         self:HandleBindEnded(input)
@@ -127,7 +132,7 @@ function Movement:SetFeature(feature, value, touchConfig, updateControl)
     if touchConfig then self.ctx.Touch() end
 end
 
-function Movement:HandleBindBegan(input, processed)
+function Movement:HandleBindBegan(input)
     if self.CapturingBind then
         local feature = self.CapturingBind
         if input.KeyCode == Enum.KeyCode.Escape then
@@ -149,7 +154,9 @@ function Movement:HandleBindBegan(input, processed)
         self:DrawBinding(feature)
         return
     end
-    if processed then return end
+    -- Game actions (for example Forsaken sprint on LeftShift) set
+    -- gameProcessedEvent. Custom binds must still receive the same key.
+    if isTyping(self.ctx) then return end
     local name = inputName(input)
     if not name then return end
     for _, feature in ipairs(BINDABLE) do
