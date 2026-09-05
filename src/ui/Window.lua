@@ -5,28 +5,32 @@ local Theme = {
     Shell = Color3.fromRGB(13, 15, 22),
     Sidebar = Color3.fromRGB(18, 21, 30),
     Toolbar = Color3.fromRGB(11, 13, 20),
-    Surface = Color3.fromRGB(22, 25, 35),
-    SurfaceHover = Color3.fromRGB(31, 35, 47),
+    Surface = Color3.fromRGB(17, 19, 27),
+    SurfaceHover = Color3.fromRGB(31, 38, 54),
     SurfaceActive = Color3.fromRGB(39, 43, 54),
-    Field = Color3.fromRGB(17, 19, 27),
-    Border = Color3.fromRGB(30, 34, 45),
-    BorderLight = Color3.fromRGB(43, 48, 62),
-    Accent = Color3.fromRGB(82, 141, 255),
-    AccentSoft = Color3.fromRGB(25, 54, 89),
+    Field = Color3.fromRGB(25, 28, 38),
+    Border = Color3.fromRGB(28, 31, 40),
+    BorderLight = Color3.fromRGB(31, 34, 44),
+    Accent = Color3.fromRGB(75, 126, 255),
+    AccentSoft = Color3.fromRGB(31, 38, 54),
     Text = Color3.fromRGB(228, 230, 236),
-    TextMuted = Color3.fromRGB(137, 142, 153),
+    TextMuted = Color3.fromRGB(170, 173, 184),
     TextDim = Color3.fromRGB(91, 96, 108),
+    RowText = Color3.fromRGB(207, 209, 218),
 }
 
+local BASE_WIDTH, BASE_HEIGHT = 748, 576
+local SIDEBAR_WIDTH, TOOLBAR_HEIGHT = 158, 56
+
 local TAB_META = {
-    Combat = {order = 1, icon = "A", group = "COMBAT"},
-    Movement = {order = 2, icon = "M", group = "COMMON"},
-    Visuals = {order = 3, icon = "V", group = "COMMON"},
-    Friend = {order = 4, icon = "F", group = "COMMON"},
-    Other = {order = 5, icon = "S", group = "COMMON"},
-    Forsaken = {order = 6, icon = "G", group = "GAME"},
-    ["Murder Mystery 2"] = {order = 6, icon = "G", group = "GAME"},
-    ["VIOLENCE DISTRICT"] = {order = 6, icon = "G", group = "GAME"},
+    Combat = {order = 1, icon = "⊙", group = "COMBAT"},
+    Movement = {order = 2, icon = "↗", group = "COMMON"},
+    Visuals = {order = 3, icon = "▣", group = "COMMON"},
+    Friend = {order = 4, icon = "●", group = "COMMON"},
+    Other = {order = 5, icon = "≡", group = "COMMON"},
+    Forsaken = {order = 6, icon = "◆", group = "GAME"},
+    ["Murder Mystery 2"] = {order = 6, icon = "◆", group = "GAME"},
+    ["VIOLENCE DISTRICT"] = {order = 6, icon = "◆", group = "GAME"},
 }
 
 local function corner(parent, radius)
@@ -36,11 +40,11 @@ local function corner(parent, radius)
     return item
 end
 
-local function stroke(parent, color, transparency)
+local function stroke(parent, color, transparency, thickness)
     local item = Instance.new("UIStroke")
     item.Color = color or Theme.Border
     item.Transparency = transparency or 0
-    item.Thickness = 1
+    item.Thickness = thickness or 1
     item.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     item.Parent = parent
     return item
@@ -134,29 +138,44 @@ function Window.new(player, coreGui, janitor)
     self.OverlayGui = overlayGui
     janitor:Add(overlayGui)
 
-    local shadow = Instance.new("Frame")
+    local shadow = Instance.new("ImageLabel")
     shadow.Name = "Shadow"
-    shadow.Size = UDim2.fromOffset(770, 570)
+    shadow.Size = UDim2.fromOffset(BASE_WIDTH + 68, BASE_HEIGHT + 68)
     shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-    shadow.Position = UDim2.new(0.5, 0, 0.5, 8)
-    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.BackgroundTransparency = 0.5
+    shadow.Position = UDim2.new(0.5, 0, 0.5, 10)
+    shadow.BackgroundTransparency = 1
     shadow.BorderSizePixel = 0
+    shadow.Image = "rbxassetid://1316045217"
+    shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.ImageTransparency = 0.16
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(10, 10, 118, 118)
     shadow.Parent = gui
-    corner(shadow, 18)
 
     local frame = Instance.new("Frame")
     frame.Name = "Shell"
-    frame.Size = UDim2.fromOffset(760, 560)
+    frame.Size = UDim2.fromOffset(BASE_WIDTH, BASE_HEIGHT)
     frame.AnchorPoint = Vector2.new(0.5, 0.5)
     frame.Position = UDim2.fromScale(0.5, 0.5)
     frame.BackgroundColor3 = Theme.Shell
+    frame.BackgroundTransparency = 0.13
     frame.BorderSizePixel = 0
     frame.ClipsDescendants = true
     frame.Parent = gui
     corner(frame, 14)
-    stroke(frame, Theme.BorderLight, 0.1)
+    stroke(frame, Color3.fromRGB(5, 7, 11), 0.05, 2)
     self.Frame, self.Shadow = frame, shadow
+
+    local lighting = game:GetService("Lighting")
+    local previousBlur = lighting:FindFirstChild("BezNigativaMenuBlur")
+    if previousBlur then previousBlur:Destroy() end
+    local blur = Instance.new("BlurEffect")
+    blur.Name = "BezNigativaMenuBlur"
+    blur.Size = 9
+    blur.Enabled = true
+    blur.Parent = lighting
+    self.Blur = blur
+    janitor:Add(blur)
 
     local uiScale = Instance.new("UIScale")
     uiScale.Parent = frame
@@ -165,8 +184,8 @@ function Window.new(player, coreGui, janitor)
     self.Scale = uiScale
     local function updateScale()
         local camera = workspace.CurrentCamera
-        local viewport = camera and camera.ViewportSize or Vector2.new(780, 580)
-        local scale = math.clamp(math.min((viewport.X - 24) / 760, (viewport.Y - 24) / 560), 0.45, 1)
+        local viewport = camera and camera.ViewportSize or Vector2.new(BASE_WIDTH + 32, BASE_HEIGHT + 32)
+        local scale = math.clamp(math.min((viewport.X - 24) / BASE_WIDTH, (viewport.Y - 24) / BASE_HEIGHT), 0.45, 1)
         uiScale.Scale, shadowScale.Scale = scale, scale
     end
     updateScale()
@@ -176,9 +195,9 @@ function Window.new(player, coreGui, janitor)
 
     local sidebarBack = Instance.new("Frame")
     sidebarBack.Name = "SidebarBackground"
-    sidebarBack.Size = UDim2.new(0, 164, 1, 0)
+    sidebarBack.Size = UDim2.new(0, SIDEBAR_WIDTH, 1, 0)
     sidebarBack.BackgroundColor3 = Theme.Sidebar
-    sidebarBack.BackgroundTransparency = 0.04
+    sidebarBack.BackgroundTransparency = 0.09
     sidebarBack.BorderSizePixel = 0
     sidebarBack.Parent = frame
     local divider = Instance.new("Frame")
@@ -243,10 +262,10 @@ function Window.new(player, coreGui, janitor)
 
     local top = Instance.new("Frame")
     top.Name = "Toolbar"
-    top.Position = UDim2.fromOffset(164, 0)
-    top.Size = UDim2.new(1, -164, 0, 58)
+    top.Position = UDim2.fromOffset(SIDEBAR_WIDTH, 0)
+    top.Size = UDim2.new(1, -SIDEBAR_WIDTH, 0, TOOLBAR_HEIGHT)
     top.BackgroundColor3 = Theme.Toolbar
-    top.BackgroundTransparency = 0.04
+    top.BackgroundTransparency = 0.12
     top.BorderSizePixel = 0
     top.Parent = frame
     self.Top = top
@@ -306,8 +325,8 @@ function Window.new(player, coreGui, janitor)
 
     local content = Instance.new("Frame")
     content.Name = "Content"
-    content.Position = UDim2.fromOffset(164, 58)
-    content.Size = UDim2.new(1, -164, 1, -58)
+    content.Position = UDim2.fromOffset(SIDEBAR_WIDTH, TOOLBAR_HEIGHT)
+    content.Size = UDim2.new(1, -SIDEBAR_WIDTH, 1, -TOOLBAR_HEIGHT)
     content.BackgroundTransparency = 1
     content.ClipsDescendants = true
     content.Parent = frame
@@ -324,7 +343,7 @@ function Window.new(player, coreGui, janitor)
             local delta = input.Position - dragStart
             local nextPosition = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
             frame.Position = nextPosition
-            shadow.Position = nextPosition + UDim2.fromOffset(0, 8)
+            shadow.Position = nextPosition + UDim2.fromOffset(0, 10)
         end
     end))
     janitor:Add(self.UserInputService.InputEnded:Connect(function(input)
@@ -340,21 +359,25 @@ function Window:SetVisible(value)
     if value then
         self.Gui.Enabled = true
         self.Frame.Position += UDim2.fromOffset(0, 10)
-        self.Frame.BackgroundTransparency = 0.12
-        self.Shadow.BackgroundTransparency = 1
-        self:Tween(self.Frame, 0.2, {Position = self.Frame.Position - UDim2.fromOffset(0, 10), BackgroundTransparency = 0})
-        self:Tween(self.Shadow, 0.24, {BackgroundTransparency = 0.5})
+        self.Frame.BackgroundTransparency = 0.3
+        self.Shadow.ImageTransparency = 1
+        if self.Blur then self.Blur.Enabled = true; self.Blur.Size = 0 end
+        self:Tween(self.Frame, 0.2, {Position = self.Frame.Position - UDim2.fromOffset(0, 10), BackgroundTransparency = 0.13})
+        self:Tween(self.Shadow, 0.24, {ImageTransparency = 0.16})
+        if self.Blur then self:Tween(self.Blur, 0.22, {Size = 9}) end
     else
-        local tween = self:Tween(self.Frame, 0.14, {Position = self.Frame.Position + UDim2.fromOffset(0, 8), BackgroundTransparency = 0.12})
-        self:Tween(self.Shadow, 0.12, {BackgroundTransparency = 1})
+        local tween = self:Tween(self.Frame, 0.14, {Position = self.Frame.Position + UDim2.fromOffset(0, 8), BackgroundTransparency = 0.3})
+        self:Tween(self.Shadow, 0.12, {ImageTransparency = 1})
+        if self.Blur then self:Tween(self.Blur, 0.14, {Size = 0}) end
         local connection
         connection = tween.Completed:Connect(function()
             connection:Disconnect()
             if self.Visible then return end
             self.Gui.Enabled = false
             self.Frame.Position -= UDim2.fromOffset(0, 8)
-            self.Frame.BackgroundTransparency = 0
-            self.Shadow.BackgroundTransparency = 0.5
+            self.Frame.BackgroundTransparency = 0.13
+            self.Shadow.ImageTransparency = 0.16
+            if self.Blur then self.Blur.Enabled = false end
         end)
     end
 end
@@ -386,8 +409,10 @@ function Window:AddPage(name, subtitle)
     page.Parent = self.Content
     local heading = label(page, name, UDim2.fromOffset(18, 14), UDim2.new(1, -36, 0, 22), 18, Theme.Text, Enum.Font.GothamBold)
     heading.Name = "PageTitle"
+    heading.Visible = false
     local subheading = label(page, subtitle or "", UDim2.fromOffset(18, 38), UDim2.new(1, -36, 0, 18), 10, Theme.TextDim, Enum.Font.GothamMedium)
     subheading.Name = "PageSubtitle"
+    subheading.Visible = false
 
     local meta = TAB_META[name] or {order = 100 + self.tabCounter, icon = string.sub(name, 1, 1), group = "GAME"}
     if meta.group == "COMBAT" then self:AddGroupLabel("COMBAT", 0) end
@@ -401,11 +426,7 @@ function Window:AddPage(name, subtitle)
     tab.BackgroundTransparency = 1
     tab.BorderSizePixel = 0
     tab.AutoButtonColor = false
-    tab.Font = Enum.Font.GothamMedium
-    tab.Text = "      " .. name
-    tab.TextColor3 = Theme.TextMuted
-    tab.TextSize = #name > 18 and 10 or 12
-    tab.TextXAlignment = Enum.TextXAlignment.Left
+    tab.Text = ""
     tab.LayoutOrder = meta.order * 10
     tab.Parent = self.Sidebar
     corner(tab, 7)
@@ -422,6 +443,9 @@ function Window:AddPage(name, subtitle)
     corner(iconBack, 5)
     local icon = label(iconBack, meta.icon, UDim2.new(), UDim2.fromScale(1, 1), 9, Theme.TextMuted, Enum.Font.GothamBold)
     icon.TextXAlignment = Enum.TextXAlignment.Center
+    local tabLabel = label(tab, name, UDim2.fromOffset(39, 0), UDim2.new(1, -46, 1, 0), #name > 18 and 10 or 12, Theme.TextMuted, Enum.Font.GothamMedium)
+    tabLabel.Name = "Label"
+    tabLabel.TextTruncate = Enum.TextTruncate.AtEnd
     local accent = Instance.new("Frame")
     accent.Name = "Accent"
     accent.Position = UDim2.fromOffset(0, 8)
@@ -479,10 +503,12 @@ function Window:ShowPage(name)
         local active = tabName == name
         local iconBack = tab:FindFirstChild("Icon")
         local icon = iconBack and iconBack:FindFirstChildOfClass("TextLabel")
+        local tabLabel = tab:FindFirstChild("Label")
         local accent = tab:FindFirstChild("Accent")
-        self:Tween(tab, 0.15, {BackgroundColor3 = active and Theme.SurfaceActive or Theme.Sidebar, BackgroundTransparency = active and 0 or 1, TextColor3 = active and Theme.Text or Theme.TextMuted})
+        self:Tween(tab, 0.15, {BackgroundColor3 = active and Theme.SurfaceActive or Theme.Sidebar, BackgroundTransparency = active and 0 or 1})
         if iconBack then self:Tween(iconBack, 0.15, {BackgroundColor3 = active and Theme.AccentSoft or Theme.Field}) end
         if icon then self:Tween(icon, 0.15, {TextColor3 = active and Theme.Accent or Theme.TextMuted}) end
+        if tabLabel then self:Tween(tabLabel, 0.15, {TextColor3 = active and Theme.Text or Theme.TextMuted}) end
         if accent then self:Tween(accent, 0.15, {BackgroundTransparency = active and 0 or 1}) end
     end
 end
@@ -507,8 +533,9 @@ end
 
 function Window:ModuleStack(page, y)
     local owner = self
+    local stackY = math.max(28, (y or 70) - 40)
     local stack = Instance.new("Frame")
-    stack.Position = UDim2.fromOffset(18, y or 70)
+    stack.Position = UDim2.fromOffset(18, stackY)
     stack.Size = UDim2.new(1, -40, 0, 0)
     stack.BackgroundTransparency = 1
     stack.Parent = page
@@ -524,54 +551,54 @@ function Window:ModuleStack(page, y)
             height += module.Frame.Size.Y.Offset + (index > 1 and 9 or 0)
         end
         stack.Size = UDim2.new(1, -40, 0, height)
-        page.CanvasSize = UDim2.fromOffset(0, math.max(484, (y or 70) + height + 18))
+        page.CanvasSize = UDim2.fromOffset(0, math.max(500, stackY + height + 18))
     end
 
     local api = {}
     function api:Add(name, expandedHeight)
         local module = {Open = false}
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 0, 42)
+        frame.Size = UDim2.new(1, 0, 0, 40)
         frame.BackgroundColor3 = Theme.Surface
-        frame.BackgroundTransparency = 0.08
+        frame.BackgroundTransparency = 0.12
         frame.BorderSizePixel = 0
         frame.ClipsDescendants = true
         frame.Parent = stack
-        corner(frame, 9)
-        stroke(frame, Theme.BorderLight, 0.22)
+        corner(frame, 14)
+        stroke(frame, Theme.BorderLight, 0)
         module.Frame = frame
 
         local header = Instance.new("TextButton")
-        header.Size = UDim2.new(1, 0, 0, 42)
+        header.Size = UDim2.new(1, 0, 0, 40)
         header.BackgroundTransparency = 1
         header.BorderSizePixel = 0
         header.AutoButtonColor = false
         header.Font = Enum.Font.GothamBold
         header.Text = string.upper(name)
-        header.TextColor3 = Theme.TextMuted
-        header.TextSize = 10
+        header.TextColor3 = Theme.TextDim
+        header.TextSize = 9
         header.TextXAlignment = Enum.TextXAlignment.Left
         header.Parent = frame
         padding(header, 14, 44)
 
         local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(3, 42)
+        indicator.Size = UDim2.fromOffset(0, 0)
         indicator.BackgroundColor3 = Theme.Accent
         indicator.BackgroundTransparency = 1
         indicator.BorderSizePixel = 0
         indicator.Parent = frame
-        local chevron = label(frame, ">", UDim2.new(1, -38, 0, 0), UDim2.fromOffset(28, 42), 15, Theme.TextDim, Enum.Font.GothamBold)
+        local chevron = label(frame, ">", UDim2.new(1, -38, 0, 0), UDim2.fromOffset(28, 40), 13, Theme.TextDim, Enum.Font.GothamBold)
         chevron.TextXAlignment = Enum.TextXAlignment.Center
         local separator = Instance.new("Frame")
-        separator.Position = UDim2.fromOffset(12, 41)
+        separator.Position = UDim2.fromOffset(12, 39)
         separator.Size = UDim2.new(1, -24, 0, 1)
         separator.BackgroundColor3 = Theme.Border
         separator.BackgroundTransparency = 1
         separator.BorderSizePixel = 0
         separator.Parent = frame
         local settings = Instance.new("Frame")
-        settings.Position = UDim2.fromOffset(0, 44)
-        settings.Size = UDim2.new(1, 0, 0, math.max(0, expandedHeight - 44))
+        settings.Position = UDim2.fromOffset(0, 40)
+        settings.Size = UDim2.new(1, 0, 0, math.max(0, expandedHeight - 40))
         settings.BackgroundTransparency = 1
         settings.Visible = false
         settings.Parent = frame
@@ -580,18 +607,18 @@ function Window:ModuleStack(page, y)
         local function setOpen(value, instant)
             module.Open = value == true
             if module.Open then settings.Visible = true end
-            local targetSize = UDim2.new(1, 0, 0, module.Open and expandedHeight or 42)
+            local targetSize = UDim2.new(1, 0, 0, module.Open and expandedHeight or 40)
             if instant then
                 frame.Size = targetSize
                 chevron.Rotation = module.Open and 90 or 0
                 chevron.TextColor3 = module.Open and Theme.Accent or Theme.TextDim
-                indicator.BackgroundTransparency = module.Open and 0 or 1
+                indicator.BackgroundTransparency = 1
                 separator.BackgroundTransparency = module.Open and 0.2 or 1
                 if not module.Open then settings.Visible = false end
             else
                 owner:Tween(frame, 0.18, {Size = targetSize})
                 owner:Tween(chevron, 0.18, {Rotation = module.Open and 90 or 0, TextColor3 = module.Open and Theme.Accent or Theme.TextDim})
-                owner:Tween(indicator, 0.18, {BackgroundTransparency = module.Open and 0 or 1})
+                owner:Tween(indicator, 0.18, {BackgroundTransparency = 1})
                 owner:Tween(separator, 0.18, {BackgroundTransparency = module.Open and 0.2 or 1})
                 task.delay(0.18, function()
                     if not module.Open then settings.Visible = false end
@@ -616,43 +643,43 @@ function Window:Toggle(parent, position, width, text, initial, callback)
     local button = Instance.new("TextButton")
     button.Position = position
     button.Size = UDim2.fromOffset(width or 190, 34)
-    button.BackgroundColor3 = Theme.Field
-    button.BackgroundTransparency = 0.08
+    button.BackgroundColor3 = Theme.SurfaceHover
+    button.BackgroundTransparency = 1
     button.BorderSizePixel = 0
     button.AutoButtonColor = false
     button.Font = Enum.Font.GothamMedium
     button.Text = text
-    button.TextColor3 = color and Theme.Text or Theme.TextMuted
+    button.TextColor3 = Theme.RowText
     button.TextSize = 11
     button.TextXAlignment = Enum.TextXAlignment.Left
     button.TextTruncate = Enum.TextTruncate.AtEnd
     button.Parent = parent
     corner(button, 6)
-    stroke(button, Theme.Border, 0.2)
+    stroke(button, Theme.Border, 1)
     padding(button, 10, 40)
 
     local track = Instance.new("Frame")
     track.AnchorPoint = Vector2.new(1, 0.5)
     track.Position = UDim2.new(1, -8, 0.5, 0)
-    track.Size = UDim2.fromOffset(27, 15)
+    track.Size = UDim2.fromOffset(29, 18)
     track.BackgroundColor3 = Theme.BorderLight
     track.BorderSizePixel = 0
     track.Parent = button
     corner(track, 8)
     local knob = Instance.new("Frame")
     knob.AnchorPoint = Vector2.new(0.5, 0.5)
-    knob.Position = UDim2.fromOffset(8, 7)
-    knob.Size = UDim2.fromOffset(9, 9)
-    knob.BackgroundColor3 = Theme.TextMuted
+    knob.Position = UDim2.fromOffset(9, 9)
+    knob.Size = UDim2.fromOffset(14, 14)
+    knob.BackgroundColor3 = Color3.fromRGB(133, 144, 156)
     knob.BorderSizePixel = 0
     knob.Parent = track
     corner(knob, 6)
 
     local function draw(instant)
         local trackColor = state and Theme.Accent or Theme.BorderLight
-        local knobPosition = UDim2.fromOffset(state and 19 or 8, 7)
-        local knobColor = state and Color3.fromRGB(238, 244, 255) or Theme.TextMuted
-        local textColor = state and Theme.Text or Theme.TextMuted
+        local knobPosition = UDim2.fromOffset(state and 20 or 9, 9)
+        local knobColor = state and Color3.fromRGB(248, 249, 252) or Color3.fromRGB(133, 144, 156)
+        local textColor = state and Theme.Text or Theme.RowText
         if instant then
             track.BackgroundColor3 = trackColor
             knob.Position, knob.BackgroundColor3 = knobPosition, knobColor
@@ -663,8 +690,8 @@ function Window:Toggle(parent, position, width, text, initial, callback)
             self:Tween(button, 0.15, {TextColor3 = textColor})
         end
     end
-    self.janitor:Add(button.MouseEnter:Connect(function() self:Tween(button, 0.12, {BackgroundColor3 = Theme.SurfaceHover}) end))
-    self.janitor:Add(button.MouseLeave:Connect(function() self:Tween(button, 0.16, {BackgroundColor3 = Theme.Field}) end))
+    self.janitor:Add(button.MouseEnter:Connect(function() self:Tween(button, 0.12, {BackgroundTransparency = 0.72}) end))
+    self.janitor:Add(button.MouseLeave:Connect(function() self:Tween(button, 0.16, {BackgroundTransparency = 1}) end))
     self.janitor:Add(button.MouseButton1Click:Connect(function()
         state = not state
         draw(false)
@@ -682,23 +709,23 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
     row.Size = UDim2.new(1, -20, 0, 32)
     row.BackgroundTransparency = 1
     row.Parent = parent
-    local title = label(row, text, UDim2.new(), UDim2.fromOffset(112, 32), 11, Theme.TextMuted, Enum.Font.GothamMedium)
+    local title = label(row, text, UDim2.new(), UDim2.fromOffset(112, 32), 11, Theme.RowText, Enum.Font.GothamMedium)
     title.TextTruncate = Enum.TextTruncate.AtEnd
 
     local field = Instance.new("Frame")
     field.Position = UDim2.fromOffset(120, 0)
     field.Size = UDim2.new(1, -120, 0, 32)
     field.BackgroundColor3 = Theme.Field
-    field.BackgroundTransparency = 0.08
+    field.BackgroundTransparency = 1
     field.BorderSizePixel = 0
     field.Parent = row
     corner(field, 6)
-    stroke(field, Theme.Border, 0.2)
+    stroke(field, Theme.Border, 1)
     local track = Instance.new("Frame")
     track.AnchorPoint = Vector2.new(0, 0.5)
     track.Position = UDim2.fromOffset(9, 16)
-    track.Size = UDim2.new(1, -62, 0, 3)
-    track.BackgroundColor3 = Theme.BorderLight
+    track.Size = UDim2.new(1, -72, 0, 3)
+    track.BackgroundColor3 = Color3.fromRGB(34, 38, 48)
     track.BorderSizePixel = 0
     track.Active = true
     track.Parent = field
@@ -712,8 +739,8 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
     local knob = Instance.new("Frame")
     knob.AnchorPoint = Vector2.new(0.5, 0.5)
     knob.Position = UDim2.new(0, 0, 0.5, 0)
-    knob.Size = UDim2.fromOffset(9, 9)
-    knob.BackgroundColor3 = Color3.fromRGB(226, 235, 255)
+    knob.Size = UDim2.fromOffset(11, 11)
+    knob.BackgroundColor3 = Color3.fromRGB(247, 248, 252)
     knob.BorderSizePixel = 0
     knob.Parent = track
     corner(knob, 6)
@@ -721,16 +748,19 @@ function Window:Slider(parent, y, text, initial, minimum, maximum, step, callbac
 
     local box = Instance.new("TextBox")
     box.AnchorPoint = Vector2.new(1, 0)
-    box.Position = UDim2.new(1, -5, 0, 0)
-    box.Size = UDim2.fromOffset(44, 32)
-    box.BackgroundTransparency = 1
+    box.Position = UDim2.new(1, -7, 0, 5)
+    box.Size = UDim2.fromOffset(42, 22)
+    box.BackgroundColor3 = Theme.Field
+    box.BackgroundTransparency = 0
     box.BorderSizePixel = 0
     box.ClearTextOnFocus = false
     box.Font = Enum.Font.GothamMedium
-    box.TextColor3 = Theme.Text
+    box.TextColor3 = Theme.TextMuted
     box.TextSize = 10
     box.TextXAlignment = Enum.TextXAlignment.Right
     box.Parent = field
+    corner(box, 5)
+    padding(box, 0, 7)
 
     local function rounded(newValue)
         newValue = math.clamp(tonumber(newValue) or value, minimum, maximum)
@@ -774,17 +804,17 @@ function Window:Button(parent, position, size, text, callback, color)
     local button = Instance.new("TextButton")
     button.Position, button.Size = position, size
     button.BackgroundColor3 = normal
-    button.BackgroundTransparency = 0.04
+    button.BackgroundTransparency = 0
     button.BorderSizePixel = 0
     button.AutoButtonColor = false
     button.Font = Enum.Font.GothamMedium
     button.Text = text
-    button.TextColor3 = Theme.TextMuted
+    button.TextColor3 = color and Theme.Text or Theme.TextMuted
     button.TextSize = 11
     button.TextTruncate = Enum.TextTruncate.AtEnd
     button.Parent = parent
-    corner(button, 6)
-    stroke(button, color and color:Lerp(Color3.new(1, 1, 1), 0.16) or Theme.Border, 0.2)
+    corner(button, 5)
+    stroke(button, color and color:Lerp(Color3.new(1, 1, 1), 0.16) or Theme.Border, 0)
     self:Hover(button, normal, hover)
     if callback then self.janitor:Add(button.MouseButton1Click:Connect(callback)) end
     return button

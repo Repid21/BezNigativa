@@ -12,10 +12,16 @@ local ITEM_FAKE = Color3.fromRGB(255, 70, 110)
 
 local ITEM_COLORS = {
     medkit = ITEM_HEAL,
+    medkititem = ITEM_HEAL,
+    medkitpickup = ITEM_HEAL,
+    droppedmedkit = ITEM_HEAL,
     fakemedkit = ITEM_FAKE,
+    fakemedkititem = ITEM_FAKE,
     bloxycola = ITEM_SPEED,
     bloxycolaitem = ITEM_SPEED,
     bloxycolatest = ITEM_SPEED,
+    bloxycolapickup = ITEM_SPEED,
+    droppedbloxycola = ITEM_SPEED,
     bloxiade = ITEM_SPEED,
     cola = ITEM_SPEED,
     fakebloxycola = ITEM_FAKE,
@@ -34,6 +40,10 @@ local ITEM_COLORS = {
 
 local function normalizedName(instance)
     return string.lower(instance.Name):gsub("[^%w]", "")
+end
+
+local function normalizedText(value)
+    return string.lower(tostring(value)):gsub("[^%w]", "")
 end
 
 function Forsaken.new(ctx)
@@ -75,7 +85,8 @@ function Forsaken.new(ctx)
     local items = stack:Add("Подсветка предметов", 126)
     self.ItemESPControl = ctx.Window:Toggle(items.Settings, UDim2.fromOffset(10, 4), 260, "Предметы на земле", false, function(value)
         self.ItemESP = value
-        if not value then self.ItemChams:Clear() end
+        self.NextItemScanAt = nil
+        if value then self:ScanItems(true) else self.ItemChams:Clear() end
         self:RefreshHeartbeat()
         ctx.Touch()
     end)
@@ -270,43 +281,58 @@ function Forsaken:ScanGenerators()
     self.GeneratorChams:Finish(seen)
 end
 
-function Forsaken:HasItemAncestor(instance, ingame)
+function Forsaken:ItemColor(instance)
+    local color = ITEM_COLORS[normalizedName(instance)]
+    if color then return color end
+    for _, attribute in ipairs({"ItemName", "ItemType", "DisplayName"}) do
+        local value = instance:GetAttribute(attribute)
+        color = value ~= nil and ITEM_COLORS[normalizedText(value)] or nil
+        if color then return color end
+    end
+    return nil
+end
+
+function Forsaken:HasItemAncestor(instance)
     local parent = instance.Parent
-    while parent and parent ~= ingame do
-        if ITEM_COLORS[normalizedName(parent)] then return true end
+    while parent and parent ~= self.ctx.Workspace do
+        if self:ItemColor(parent) then return true end
         parent = parent.Parent
     end
     return false
 end
 
+
+function Forsaken:IsGroundItem(instance)
+    if not instance:IsDescendantOf(self.ctx.Workspace) then return false end
+    local parent = instance.Parent
+    while parent and parent ~= self.ctx.Workspace do
+        if parent:IsA("Model") and parent:FindFirstChildOfClass("Humanoid") then return false end
+        parent = parent.Parent
+    end
+    return true
+end
+
 function Forsaken:ItemAdornee(instance)
-    if instance:IsA("Model") or instance:IsA("BasePart") then return instance end
-    local itemRoot = instance:FindFirstChild("ItemRoot", true)
-    if itemRoot and itemRoot:IsA("BasePart") then return itemRoot end
+    -- Highlight the whole Tool/Model. ItemRoot is often an invisible pickup
+    -- hitbox, so using it alone can produce no visible chams.
+    if instance:IsA("Tool") or instance:IsA("Model") or instance:IsA("BasePart") then return instance end
     local handle = instance:FindFirstChild("Handle", true)
     if handle and handle:IsA("BasePart") then return handle end
     return instance:FindFirstChildWhichIsA("Model", true)
         or instance:FindFirstChildWhichIsA("BasePart", true)
 end
 
-function Forsaken:ScanItems()
+function Forsaken:ScanItems(force)
+    local now = os.clock()
+    if not force and self.NextItemScanAt and now < self.NextItemScanAt then return end
+    self.NextItemScanAt = now + 0.5
+
     local seen = {}
-    local ingame = self:IngameFolder()
-    if ingame then
-        local function inspect(instance)
-            local color = ITEM_COLORS[normalizedName(instance)]
-            if color and not self:HasItemAncestor(instance, ingame) then
-                local adornee = self:ItemAdornee(instance)
-                if adornee then self.ItemChams:Show(adornee, color, seen) end
-            end
-        end
-        for _, child in ipairs(ingame:GetChildren()) do
-            -- The level geometry lives in Ingame.Map, while pickups are its
-            -- siblings. Skipping the level keeps this frequent scan cheap.
-            if child.Name ~= "Map" then
-                inspect(child)
-                for _, instance in ipairs(child:GetDescendants()) do inspect(instance) end
-            end
+    for _, instance in ipairs(self.ctx.Workspace:GetDescendants()) do
+        local color = self:ItemColor(instance)
+        if color and self:IsGroundItem(instance) and not self:HasItemAncestor(instance) then
+            local adornee = self:ItemAdornee(instance)
+            if adornee then self.ItemChams:Show(adornee, color, seen) end
         end
     end
     self.ItemChams:Finish(seen)
@@ -396,7 +422,8 @@ function Forsaken:ApplyConfig(data)
     self.RepairDelayControl.Set(self.RepairDelay)
     if not self.KillerESP then self.KillerChams:Clear() end
     if not self.GeneratorESP then self.GeneratorChams:Clear() end
-    if not self.ItemESP then self.ItemChams:Clear() end
+    self.NextItemScanAt = nil
+    if self.ItemESP then self:ScanItems(true) else self.ItemChams:Clear() end
     if self.InfiniteStamina then self:ApplyInfiniteStamina() else self:RestoreStamina() end
     self:ResetAutoGenerator()
     self:RefreshHeartbeat()
@@ -405,6 +432,7 @@ end
 function Forsaken:Destroy()
     self.KillerESP, self.GeneratorESP, self.ItemESP, self.InfiniteStamina, self.AutoGenerator = false, false, false, false, false
     self:ResetAutoGenerator()
+    self.NextItemScanAt = nil
     self:RestoreStamina()
     self:RefreshHeartbeat()
     self.KillerChams:Clear()
